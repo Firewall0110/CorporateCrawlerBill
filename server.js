@@ -1,38 +1,40 @@
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-const cors = require('cors');
+const path = require('path');
 const GameRoom = require('./GameRoom');
 
 const app = express();
 const server = http.createServer(app);
 
-// Configure CORS for Socket.io
+// Configure Socket.io
 const io = socketIo(server, {
   cors: {
-    origin: "*", // In production, specify your client domain
+    origin: "*",
     methods: ["GET", "POST"]
   }
 });
 
-app.use(cors());
 app.use(express.json());
+
+// Serve static files from React build directory
+const buildPath = path.join(__dirname, 'build');
+app.use(express.static(buildPath));
 
 // Store active game rooms
 const gameRooms = new Map();
 const MAX_PLAYERS_PER_ROOM = 8;
 
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+// API Routes
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
     rooms: gameRooms.size,
     timestamp: Date.now()
   });
 });
 
-// Get list of available rooms
-app.get('/rooms', (req, res) => {
+app.get('/api/rooms', (req, res) => {
   const roomList = Array.from(gameRooms.values()).map(room => ({
     id: room.id,
     name: room.name,
@@ -41,6 +43,11 @@ app.get('/rooms', (req, res) => {
     status: room.status
   }));
   res.json({ rooms: roomList });
+});
+
+// Serve React app for all non-API routes (client-side routing)
+app.get(/^(?!\/api\/).*/, (req, res) => {
+  res.sendFile(path.join(buildPath, 'index.html'));
 });
 
 // Socket.io connection handling

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
-// SERVER CONFIG
-const SERVER_URL = 'https://corporatecrawlerbill-production.up.railway.app';
+// SERVER CONFIG - Use relative URL so it works both locally and on Railway
+const SERVER_URL = window.location.origin;
 
 const BeatEmUpGame = () => {
   const [screen, setScreen] = useState('menu'); // menu, lobby, game
