@@ -39,6 +39,16 @@ class GameRoom {
     // All active modifiers from player attributes
     this.activeModifiers = [];
 
+    // Auto-start timer (game starts 3 seconds after room creation)
+    this.autoStartTimer = setTimeout(() => {
+      if (this.status === 'waiting') {
+        console.log(`Auto-starting game in room ${this.id}`);
+        this.status = 'playing';
+        this.nextWaveSpawnTime = Date.now();
+        this.io.to(this.id).emit('gameStarted');
+      }
+    }, 3000);
+
     this.startGameLoop();
   }
 
