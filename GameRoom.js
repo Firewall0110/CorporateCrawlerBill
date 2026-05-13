@@ -192,14 +192,17 @@ class GameRoom {
     const waves = zone.waves;
     if (this.currentWaveIndex >= waves.length) {
       // Zone complete, move to next
+      console.log(`Zone ${this.currentZoneIndex} complete, advancing...`);
       this.advanceZone();
       return;
     }
 
     const currentWave = waves[this.currentWaveIndex];
+    const timeSinceSpawn = now - this.nextWaveSpawnTime;
 
     if (now >= this.nextWaveSpawnTime) {
       // Spawn wave
+      console.log(`Wave spawn time reached! (now=${now}, nextSpawnTime=${this.nextWaveSpawnTime}, delta=${timeSinceSpawn}ms)`);
       this.spawnWave(currentWave);
       this.nextWaveSpawnTime = now + 5000; // 5s between waves
       this.currentWaveIndex++;
@@ -212,6 +215,8 @@ class GameRoom {
   spawnWave(waveConfig) {
     const zone = this.zoneConfig[this.currentZoneIndex];
     const startX = zone.scrollRange.start + 100;
+
+    console.log(`Spawning wave: ${waveConfig.count}x ${waveConfig.enemyType} in zone ${this.currentZoneIndex}`);
 
     for (let i = 0; i < waveConfig.count; i++) {
       const enemyId = `${this.id}-enemy-${Date.now()}-${i}`;
@@ -229,6 +234,7 @@ class GameRoom {
       enemy.recomputeEffectiveStats(this.activeModifiers);
 
       this.enemies.push(enemy);
+      console.log(`  Created enemy: ${enemy.name} at x=${spawnX}`);
     }
   }
 
@@ -415,6 +421,9 @@ class GameRoom {
     // Start game if we have 2+ players
     if (this.players.size >= 2 && this.status === 'waiting') {
       this.status = 'playing';
+      // Initialize wave spawning timer when game starts
+      this.nextWaveSpawnTime = Date.now();
+      console.log(`Game started! First wave will spawn at ${this.nextWaveSpawnTime}`);
       this.io.to(this.id).emit('gameStarted');
     }
   }
