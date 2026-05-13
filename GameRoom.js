@@ -158,6 +158,12 @@ class GameRoom {
     // Only process game logic if game is actively playing
     if (this.status !== 'playing') return;
 
+    // Debug: Log first time we reach this point
+    if (!this.debugUpdateLogged) {
+      console.log(`[GameRoom ${this.id}] Game update running! Status: ${this.status}, NextWaveTime: ${this.nextWaveSpawnTime}, Now: ${now}, Waves in zone: ${this.zoneConfig[this.currentZoneIndex]?.waves?.length}`);
+      this.debugUpdateLogged = true;
+    }
+
     // Update all players
     this.players.forEach(player => {
       player.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth);
@@ -210,6 +216,12 @@ class GameRoom {
 
     const currentWave = waves[this.currentWaveIndex];
     const timeSinceSpawn = now - this.nextWaveSpawnTime;
+
+    // Debug: Log wave spawning check
+    if (!this.debugWaveLogged) {
+      console.log(`[Wave Spawn Check] Zone: ${zone.name}, CurrentWave: ${this.currentWaveIndex}, NextSpawnTime: ${this.nextWaveSpawnTime}, Now: ${now}, Ready: ${now >= this.nextWaveSpawnTime}`);
+      this.debugWaveLogged = true;
+    }
 
     if (now >= this.nextWaveSpawnTime) {
       // Spawn wave
