@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 
-// SERVER CONFIG - Update this after deploying to Railway
+// SERVER CONFIG
 const SERVER_URL = 'https://corporatecrawlerbill-production.up.railway.app';
 
 const BeatEmUpGame = () => {
@@ -13,10 +13,15 @@ const BeatEmUpGame = () => {
   const [gameState, setGameState] = useState(null);
   const [availableRooms, setAvailableRooms] = useState([]);
   const [error, setError] = useState('');
+  const [cameraX, setCameraX] = useState(0);
 
   const canvasRef = useRef(null);
   const keysPressed = useRef({});
   const animationFrameRef = useRef(null);
+
+  const CANVAS_WIDTH = 1200;
+  const CANVAS_HEIGHT = 500;
+  const CAMERA_FOLLOW_DISTANCE = 300; // How far ahead of player camera looks
 
   // Initialize socket connection
   useEffect(() => {
@@ -55,16 +60,27 @@ const BeatEmUpGame = () => {
     });
 
     newSocket.on('playerHit', ({ attackerId, targetId, damage }) => {
-      // Visual/audio feedback for hits
-      console.log(`Player ${attackerId} hit ${targetId} for ${damage} damage`);
+      console.log(`Hit for ${damage} damage`);
     });
 
     newSocket.on('playerKnockedOut', ({ playerId: pid, knockedOutBy }) => {
-      console.log(`Player ${pid} knocked out by ${knockedOutBy}`);
+      console.log(`Player ${pid} knocked out`);
     });
 
     newSocket.on('gameStarted', () => {
       console.log('Game started!');
+    });
+
+    newSocket.on('zoneChange', ({ zoneName, zoneIndex }) => {
+      console.log(`Entered zone: ${zoneName}`);
+    });
+
+    newSocket.on('bossEncounter', ({ bossName }) => {
+      console.log(`Boss encounter: ${bossName}`);
+    });
+
+    newSocket.on('levelComplete', ({ message }) => {
+      console.log(message);
     });
 
     newSocket.on('error', ({ message }) => {
@@ -84,7 +100,6 @@ const BeatEmUpGame = () => {
     const handleKeyDown = (e) => {
       keysPressed.current[e.key.toLowerCase()] = true;
 
-      // Prevent default for game keys
       if (['a', 'd', 'w', 's', ' ', 'j', 'k', 'l'].includes(e.key.toLowerCase())) {
         e.preventDefault();
       }
@@ -129,10 +144,24 @@ const BeatEmUpGame = () => {
         socket.emit('playerAttack', { roomId, attackType: 'special' });
         keysPressed.current['l'] = false;
       }
-    }, 16); // ~60 FPS
+    }, 16);
 
     return () => clearInterval(inputInterval);
   }, [socket, screen, roomId]);
+
+  // Update camera position
+  useEffect(() => {
+    if (!gameState || !gameState.players.length) return;
+
+    // Find this player
+    const thisPlayer = gameState.players.find(p => p.id === playerId);
+    if (!thisPlayer) return;
+
+    // Follow player, keeping them centered-ish in viewport
+    const targetCameraX = thisPlayer.x - CANVAS_WIDTH / 3;
+    const clampedCameraX = Math.max(0, Math.min(targetCameraX, gameState.worldWidth - CANVAS_WIDTH));
+    setCameraX(clampedCameraX);
+  }, [gameState, playerId]);
 
   // Canvas rendering
   useEffect(() => {
@@ -142,26 +171,14 @@ const BeatEmUpGame = () => {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
+
     const render = () => {
       // Clear canvas
       ctx.fillStyle = '#0a0a0a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Draw background grid
-      ctx.strokeStyle = '#1a1a2e';
-      ctx.lineWidth = 1;
-      for (let x = 0; x < canvas.width; x += 50) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, canvas.height);
-        ctx.stroke();
-      }
-      for (let y = 0; y < canvas.height; y += 50) {
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(canvas.width, y);
-        ctx.stroke();
-      }
+      // Draw zone background based on current zone
+      drawZoneBackground(ctx, gameState.currentZoneIndex, gameState.worldWidth);
 
       // Draw ground
       ctx.fillStyle = '#16213e';
@@ -175,90 +192,24 @@ const BeatEmUpGame = () => {
       ctx.lineTo(canvas.width, gameState.groundLevel);
       ctx.stroke();
 
-      // Draw players
-      gameState.players.forEach((player) => {
-        const isMe = player.id === playerId;
-
-        // Player shadow
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
-        ctx.beginPath();
-        ctx.ellipse(
-          player.x + player.width / 2,
-          gameState.groundLevel + 5,
-          player.width / 2,
-          8,
-          0,
-          0,
-          Math.PI * 2
-        );
-        ctx.fill();
-
-        // Player body
-        ctx.fillStyle = player.color;
-        if (isMe) {
-          ctx.shadowColor = player.color;
-          ctx.shadowBlur = 20;
-        }
-
-        // Draw rectangle for player
-        ctx.fillRect(player.x, player.y, player.width, player.height);
-
-        ctx.shadowBlur = 0;
-
-        // Draw direction indicator
-        ctx.fillStyle = '#ffffff';
-        const eyeX = player.direction > 0 ? player.x + player.width - 10 : player.x + 5;
-        ctx.fillRect(eyeX, player.y + 15, 5, 5);
-
-        // Attack visual
-        if (player.isAttacking) {
-          ctx.strokeStyle = '#ff00ff';
-          ctx.lineWidth = 3;
-          ctx.shadowColor = '#ff00ff';
-          ctx.shadowBlur = 10;
-
-          const attackX = player.direction > 0 ? player.x + player.width : player.x;
-          ctx.beginPath();
-          ctx.arc(attackX + (player.direction * 40), player.y + 30, 25, 0, Math.PI * 2);
-          ctx.stroke();
-
-          ctx.shadowBlur = 0;
-        }
-
-        // Health bar
-        const barWidth = player.width;
-        const barHeight = 6;
-        const barX = player.x;
-        const barY = player.y - 15;
-
-        // Health bar background
-        ctx.fillStyle = '#1a1a2e';
-        ctx.fillRect(barX, barY, barWidth, barHeight);
-
-        // Health bar fill
-        const healthPercent = player.health / player.maxHealth;
-        ctx.fillStyle = healthPercent > 0.5 ? '#00ff00' : healthPercent > 0.25 ? '#ffff00' : '#ff0000';
-        ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
-
-        // Health bar border
-        ctx.strokeStyle = '#00ffff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(barX, barY, barWidth, barHeight);
-
-        // Player name
-        ctx.fillStyle = isMe ? '#00ffff' : '#ffffff';
-        ctx.font = '12px "Press Start 2P", monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText(player.name, player.x + player.width / 2, barY - 5);
-
-        // Knocked out indicator
-        if (player.isKnockedOut) {
-          ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-          ctx.font = 'bold 16px "Press Start 2P", monospace';
-          ctx.textAlign = 'center';
-          ctx.fillText('K.O.', player.x + player.width / 2, player.y + player.height / 2);
-        }
+      // Draw all enemies with health bars
+      gameState.enemies.forEach(enemy => {
+        drawUnit(ctx, enemy, cameraX, gameState.groundLevel, false);
       });
+
+      // Draw boss if exists
+      if (gameState.boss) {
+        drawBoss(ctx, gameState.boss, cameraX, gameState.groundLevel);
+      }
+
+      // Draw all players
+      gameState.players.forEach(player => {
+        const isMe = player.id === playerId;
+        drawUnit(ctx, player, cameraX, gameState.groundLevel, isMe);
+      });
+
+      // Draw HUD
+      drawHUD(ctx, gameState, playerId, CANVAS_WIDTH);
 
       animationFrameRef.current = requestAnimationFrame(render);
     };
@@ -270,7 +221,7 @@ const BeatEmUpGame = () => {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [gameState, screen, playerId]);
+  }, [gameState, screen, playerId, cameraX]);
 
   // Fetch available rooms
   const fetchRooms = async () => {
@@ -289,7 +240,7 @@ const BeatEmUpGame = () => {
       return;
     }
     const roomName = `${playerName}'s Game`;
-    const color = '#' + Math.floor(Math.random()*16777215).toString(16);
+    const color = '#' + Math.floor(Math.random() * 16777215).toString(16);
     socket.emit('createRoom', {
       roomName,
       playerData: { name: playerName, color }
@@ -301,7 +252,7 @@ const BeatEmUpGame = () => {
       setError('Please enter your name');
       return;
     }
-    const color = '#' + Math.floor(Math.random()*16777215).toString(16);
+    const color = '#' + Math.floor(Math.random() * 16777215).toString(16);
     socket.emit('joinRoom', {
       roomId,
       playerData: { name: playerName, color }
@@ -321,7 +272,6 @@ const BeatEmUpGame = () => {
       justifyContent: 'center',
       overflow: 'hidden'
     }}>
-      {/* Import retro font */}
       <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
 
       {error && (
@@ -362,7 +312,7 @@ const BeatEmUpGame = () => {
           </h1>
 
           <p style={{ fontSize: '10px', marginBottom: '30px', color: '#00ffff' }}>
-            Multiplayer Beat'em Up - A Retirement Celebration Game
+            Defeat the Critical Priority 1 Outage
           </p>
 
           <input
@@ -571,63 +521,302 @@ const BeatEmUpGame = () => {
         </div>
       )}
 
-      {screen === 'game' && (
+      {screen === 'game' && gameState && (
         <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
-          {/* HUD */}
+          {/* Top HUD */}
           <div style={{
-            padding: '20px',
-            background: 'rgba(10, 10, 10, 0.9)',
+            padding: '15px 20px',
+            background: 'rgba(10, 10, 10, 0.95)',
             borderBottom: '2px solid #00ffff',
             display: 'flex',
             justifyContent: 'space-between',
-            alignItems: 'center'
+            alignItems: 'center',
+            fontSize: '11px'
           }}>
             <div>
-              <span style={{ fontSize: '12px', color: '#00ffff' }}>ROOM: {roomId}</span>
-            </div>
-            <div>
-              <span style={{ fontSize: '12px', color: '#ff00ff' }}>
-                PLAYERS: {gameState?.players.length || 0}/8
+              <span style={{ color: '#00ffff', marginRight: '20px' }}>
+                ZONE: {gameState.currentZone?.name || 'Unknown'}
               </span>
+            </div>
+            <div style={{ color: '#ff00ff' }}>
+              PLAYERS: {gameState.players.length}/8
             </div>
           </div>
 
-          {/* Game Canvas */}
+          {/* Canvas */}
           <canvas
             ref={canvasRef}
-            width={1200}
-            height={500}
+            width={CANVAS_WIDTH}
+            height={CANVAS_HEIGHT}
             style={{
               flex: 1,
               maxWidth: '100%',
-              maxHeight: 'calc(100vh - 180px)',
+              maxHeight: 'calc(100vh - 160px)',
               margin: '0 auto',
               border: '3px solid #00ffff',
               boxShadow: '0 0 40px rgba(0, 255, 255, 0.3)',
-              background: '#0a0a0a'
+              background: '#0a0a0a',
+              display: 'block'
             }}
           />
 
-          {/* Controls */}
+          {/* Bottom HUD */}
           <div style={{
             padding: '15px',
-            background: 'rgba(10, 10, 10, 0.9)',
+            background: 'rgba(10, 10, 10, 0.95)',
             borderTop: '2px solid #00ffff',
             display: 'flex',
             justifyContent: 'center',
-            gap: '30px',
-            fontSize: '10px'
+            gap: '20px',
+            fontSize: '9px',
+            flexWrap: 'wrap'
           }}>
-            <span>MOVE: A/D or ← →</span>
-            <span>JUMP: W/SPACE or ↑</span>
-            <span>PUNCH: J</span>
-            <span>KICK: K</span>
-            <span>SPECIAL: L</span>
+            <span>A/D: MOVE</span>
+            <span>SPACE: JUMP</span>
+            <span>J: PUNCH</span>
+            <span>K: KICK</span>
+            <span>L: SPECIAL</span>
           </div>
         </div>
       )}
     </div>
   );
 };
+
+/**
+ * Draw a unit (player or enemy)
+ */
+function drawUnit(ctx, unit, cameraX, groundLevel, isMe) {
+  if (!unit) return;
+
+  const screenX = unit.x - cameraX;
+  const screenY = unit.y;
+
+  // Only draw if on screen
+  if (screenX + unit.width < 0 || screenX > ctx.canvas.width) return;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.beginPath();
+  ctx.ellipse(screenX + unit.width / 2, groundLevel + 5, unit.width / 2, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Body
+  ctx.fillStyle = unit.color || '#888888';
+  if (isMe) {
+    ctx.shadowColor = unit.color;
+    ctx.shadowBlur = 20;
+  }
+  ctx.fillRect(screenX, screenY, unit.width, unit.height);
+  ctx.shadowBlur = 0;
+
+  // Direction indicator
+  ctx.fillStyle = '#ffffff';
+  const eyeX = unit.direction > 0 ? screenX + unit.width - 10 : screenX + 5;
+  ctx.fillRect(eyeX, screenY + 15, 5, 5);
+
+  // Attack effect
+  if (unit.isAttacking) {
+    ctx.strokeStyle = '#ff00ff';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = '#ff00ff';
+    ctx.shadowBlur = 10;
+    const attackX = unit.direction > 0 ? screenX + unit.width : screenX;
+    ctx.beginPath();
+    ctx.arc(attackX + unit.direction * 40, screenY + 30, 25, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+  }
+
+  // Health bar
+  const barWidth = unit.width;
+  const barHeight = 6;
+  const barX = screenX;
+  const barY = screenY - 15;
+
+  ctx.fillStyle = '#1a1a2e';
+  ctx.fillRect(barX, barY, barWidth, barHeight);
+
+  const healthPercent = unit.health / unit.maxHealth;
+  ctx.fillStyle = healthPercent > 0.5 ? '#00ff00' : healthPercent > 0.25 ? '#ffff00' : '#ff0000';
+  ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+
+  ctx.strokeStyle = '#00ffff';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+  // Name
+  ctx.fillStyle = isMe ? '#00ffff' : '#ffffff';
+  ctx.font = '12px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(unit.name.substring(0, 10), screenX + unit.width / 2, barY - 5);
+
+  // Knocked out
+  if (unit.isKnockedOut) {
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+    ctx.font = 'bold 16px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('K.O.', screenX + unit.width / 2, screenY + unit.height / 2);
+  }
+}
+
+/**
+ * Draw the boss with prominent health bar
+ */
+function drawBoss(ctx, boss, cameraX, groundLevel) {
+  if (!boss) return;
+
+  const screenX = boss.x - cameraX;
+  const screenY = boss.y;
+
+  // Only draw if on screen
+  if (screenX + boss.width < 0 || screenX > ctx.canvas.width) return;
+
+  // Glow effect
+  ctx.shadowColor = '#ff00ff';
+  ctx.shadowBlur = 30;
+
+  // Body (larger)
+  ctx.fillStyle = '#ff00ff';
+  ctx.fillRect(screenX - 20, screenY - 20, boss.width + 40, boss.height + 40);
+
+  ctx.shadowBlur = 0;
+
+  // Boss health bar (prominent, at top)
+  const bossBarWidth = 200;
+  const bossBarHeight = 20;
+  const bossBarX = ctx.canvas.width / 2 - bossBarWidth / 2;
+  const bossBarY = 30;
+
+  // Background
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(bossBarX, bossBarY, bossBarWidth, bossBarHeight);
+
+  // Health fill
+  const healthPercent = boss.health / boss.maxHealth;
+  if (healthPercent > 0.5) ctx.fillStyle = '#ff3366';
+  else if (healthPercent > 0.25) ctx.fillStyle = '#ffff00';
+  else ctx.fillStyle = '#ff0000';
+
+  ctx.fillRect(bossBarX, bossBarY, bossBarWidth * healthPercent, bossBarHeight);
+
+  // Border
+  ctx.strokeStyle = '#ff00ff';
+  ctx.lineWidth = 3;
+  ctx.strokeRect(bossBarX, bossBarY, bossBarWidth, bossBarHeight);
+
+  // Label
+  ctx.fillStyle = '#ff00ff';
+  ctx.font = 'bold 12px "Press Start 2P", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('BOSS', bossBarX + 10, bossBarY + 15);
+
+  // Health text
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '10px "Press Start 2P", monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(`${Math.round(boss.health)}/${Math.round(boss.maxHealth)}`, bossBarX + bossBarWidth - 10, bossBarY + 15);
+
+  // Draw attack telegrams
+  if (boss.currentAttack) {
+    if (boss.currentAttack.isInTelegram) {
+      ctx.fillStyle = 'rgba(255, 0, 102, 0.3)';
+      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+
+      ctx.fillStyle = '#ff0066';
+      ctx.font = 'bold 16px "Press Start 2P", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${boss.currentAttack.name} INCOMING!`, ctx.canvas.width / 2, 100);
+    }
+
+    // Draw attack zones for ServiceRestarts pattern
+    if (boss.currentAttack.type === 'zones' && boss.attackZones) {
+      boss.attackZones.forEach(zone => {
+        const zoneScreenX = zone.x - cameraX;
+        ctx.strokeStyle = zone.hasDetonated ? '#ff0000' : '#ff9900';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(zoneScreenX, zone.y, zone.radius, 0, Math.PI * 2);
+        ctx.stroke();
+
+        if (!zone.hasDetonated) {
+          ctx.fillStyle = 'rgba(255, 153, 0, 0.2)';
+          ctx.fill();
+        }
+      });
+    }
+  }
+}
+
+/**
+ * Draw zone-specific background
+ */
+function drawZoneBackground(ctx, zoneIndex, worldWidth) {
+  ctx.fillStyle = '#0a0a0a';
+
+  switch (zoneIndex) {
+    case 0: // Parking Lot
+      ctx.fillStyle = '#4a4a5a';
+      // Yellow parking lines
+      ctx.strokeStyle = '#ffff00';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < worldWidth; i += 200) {
+        ctx.beginPath();
+        ctx.moveTo(i, 200);
+        ctx.lineTo(i + 100, 200);
+        ctx.stroke();
+      }
+      break;
+    case 1: // Quad
+      ctx.fillStyle = '#2d5a2d';
+      // Trees
+      ctx.fillStyle = '#1a3a1a';
+      for (let i = 100; i < worldWidth; i += 400) {
+        ctx.fillRect(i, 250, 60, 100);
+      }
+      ctx.fillStyle = '#2d5a2d';
+      break;
+    case 2: // Lobby
+      ctx.fillStyle = '#5a5a6a';
+      // Reception desk silhouette
+      ctx.fillStyle = '#3a3a4a';
+      ctx.fillRect(500, 200, 300, 150);
+      ctx.fillStyle = '#5a5a6a';
+      break;
+    case 3: // Elevators
+      ctx.fillStyle = '#4a4a5a';
+      // Elevator doors
+      ctx.fillStyle = '#888888';
+      ctx.fillRect(500, 200, 100, 150);
+      ctx.fillRect(650, 200, 100, 150);
+      ctx.fillStyle = '#4a4a5a';
+      break;
+  }
+
+  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+}
+
+/**
+ * Draw HUD overlay
+ */
+function drawHUD(ctx, gameState, playerId, canvasWidth) {
+  // Current player info
+  const thisPlayer = gameState.players.find(p => p.id === playerId);
+  if (thisPlayer && thisPlayer.attributes && thisPlayer.attributes.length > 0) {
+    ctx.fillStyle = '#00ffff';
+    ctx.font = '9px "Press Start 2P", monospace';
+    ctx.textAlign = 'left';
+
+    let y = 20;
+    ctx.fillText('YOUR ATTRIBUTES:', 10, y);
+    y += 12;
+
+    thisPlayer.attributes.forEach(attr => {
+      ctx.fillStyle = '#ffff00';
+      ctx.fillText(`• ${attr.name}`, 15, y);
+      y += 11;
+    });
+  }
+}
 
 export default BeatEmUpGame;
