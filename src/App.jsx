@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 // SERVER CONFIG
@@ -21,7 +21,6 @@ const BeatEmUpGame = () => {
 
   const CANVAS_WIDTH = 1200;
   const CANVAS_HEIGHT = 500;
-  const CAMERA_FOLLOW_DISTANCE = 300; // How far ahead of player camera looks
 
   // Initialize socket connection
   useEffect(() => {
