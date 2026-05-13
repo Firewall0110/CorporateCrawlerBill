@@ -847,17 +847,23 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
     });
   }
 
-  // Debug info
+  // Kill counter (top right - PROMINENT)
   if (gameState.debug) {
-    ctx.fillStyle = '#ff9900';
+    ctx.fillStyle = '#ff3333';
+    ctx.font = 'bold 16px "Press Start 2P", monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText(`KILLS: ${gameState.debug.totalKills}`, canvasWidth - 10, 30);
+
+    // Section/spawn info
+    ctx.fillStyle = '#ffff00';
     ctx.font = '8px "Press Start 2P", monospace';
     ctx.textAlign = 'left';
-
-    let debugY = ctx.canvas.height - 60;
-    ctx.fillText(`DEBUG:`, 10, debugY);
-    ctx.fillText(`Enemies: ${gameState.debug.enemyCount}`, 10, debugY + 12);
-    ctx.fillText(`Wave: ${gameState.debug.currentWaveIndex}`, 10, debugY + 24);
-    ctx.fillText(`HasZoneWaves: ${gameState.debug.hasZoneWaves ? 'YES' : 'NO'}`, 10, debugY + 36);
+    let debugY = ctx.canvas.height - 72;
+    ctx.fillText(`SPAWNED: ${gameState.debug.enemiesSpawned}`, 10, debugY);
+    ctx.fillText(`ALIVE: ${gameState.debug.enemyCount}`, 10, debugY + 12);
+    ctx.fillText(`SECTION: ${gameState.debug.currentSectionIndex}`, 10, debugY + 24);
+    ctx.fillText(`CLEAR: ${gameState.debug.sectionClear ? 'YES' : 'NO'}`, 10, debugY + 36);
+    ctx.fillText(`X POS: ${Math.floor(gameState.debug.playerX)}/${gameState.debug.maxX}`, 10, debugY + 48);
   }
 }
 

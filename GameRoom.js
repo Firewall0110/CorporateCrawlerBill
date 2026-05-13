@@ -34,11 +34,17 @@ class GameRoom {
     this.currentZoneIndex = 0;
     this.currentSectionIndex = 0;
     this.sectionWavesClear = false; // Has current section's wave been cleared?
+    this.sectionWavesSpawned = false; // Have we already spawned waves for this section?
     this.maxRightBound = 300; // Player can't move beyond this X until section is clear
     this.zoneConfig = this.createZoneConfig();
 
     // All active modifiers from player attributes
     this.activeModifiers = [];
+
+    // Kill tracking
+    this.totalKills = 0;
+    this.enemiesSpawned = 0;
+    this.spawnedEnemyIds = new Set(); // Track which enemies have been spawned
 
     // Auto-start timer (game starts 3 seconds after room creation)
     this.autoStartTimer = setTimeout(() => {
@@ -253,7 +259,12 @@ class GameRoom {
     // Combat collision detection
     this.checkCombat();
 
-    // Clean up dead enemies
+    // Clean up dead enemies and track kills
+    const deadEnemies = this.enemies.filter(enemy => enemy.isKnockedOut && enemy.health <= 0);
+    deadEnemies.forEach(enemy => {
+      this.totalKills++;
+      console.log(`[Kill] #${this.totalKills}: ${enemy.name} (Total: ${this.totalKills})`);
+    });
     this.enemies = this.enemies.filter(enemy => !enemy.isKnockedOut || enemy.health > 0);
 
     // Boss defeat
@@ -300,23 +311,18 @@ class GameRoom {
     if (index !== this.currentSectionIndex) {
       this.currentSectionIndex = index;
       this.sectionWavesClear = false;
+      this.sectionWavesSpawned = false; // Reset spawn flag for new section
       this.maxRightBound = section.xRange.end;
       console.log(`[Section] Entered: ${section.name} (section ${index})`);
     }
 
-    // Spawn waves in this section if not already spawned
-    if (!this.sectionWavesClear && section.waves && section.waves.length > 0) {
-      const waveSpawned = this.enemies.some(e => {
-        const sectionWaves = section.waves;
-        return sectionWaves.some(w => e.x >= section.xRange.start && e.x <= section.xRange.end);
+    // Spawn waves in this section ONCE and only once
+    if (!this.sectionWavesSpawned && section.waves && section.waves.length > 0) {
+      console.log(`[Section] Spawning waves for: ${section.name}`);
+      section.waves.forEach(waveConfig => {
+        this.spawnWave(waveConfig);
       });
-
-      if (!waveSpawned) {
-        console.log(`[Section] Spawning waves for: ${section.name}`);
-        section.waves.forEach(waveConfig => {
-          this.spawnWave(waveConfig);
-        });
-      }
+      this.sectionWavesSpawned = true; // Mark as spawned - never spawn again for this section
     }
 
     // Check if section is cleared (no enemies in this section)
@@ -339,10 +345,17 @@ class GameRoom {
     // Get spawn X from wave config or use centered position
     const baseSpawnX = waveConfig.spawnX || 800;
 
-    console.log(`Spawning wave: ${waveConfig.count}x ${waveConfig.enemyType}`);
+    console.log(`[Spawn] Wave: ${waveConfig.count}x ${waveConfig.enemyType}`);
 
     for (let i = 0; i < waveConfig.count; i++) {
-      const enemyId = `${this.id}-enemy-${Date.now()}-${i}`;
+      const enemyId = `${this.id}-enemy-${Date.now()}-${Math.random()}`; // Ensure unique IDs
+
+      // Don't spawn if already spawned
+      if (this.spawnedEnemyIds.has(enemyId)) {
+        console.log(`[Spawn] Skipped duplicate: ${enemyId}`);
+        continue;
+      }
+
       const baseStats = this.getEnemyBaseStats(waveConfig.enemyType);
       const spawnX = baseSpawnX + i * 60; // Spread enemies out
 
@@ -357,7 +370,10 @@ class GameRoom {
       enemy.recomputeEffectiveStats(this.activeModifiers);
 
       this.enemies.push(enemy);
-      console.log(`  Created enemy: ${enemy.name} at x=${spawnX}`);
+      this.spawnedEnemyIds.add(enemyId);
+      this.enemiesSpawned++;
+
+      console.log(`[Spawn] Created #${this.enemiesSpawned}: ${enemy.name} at x=${spawnX}`);
     }
   }
 
@@ -372,6 +388,7 @@ class GameRoom {
     this.currentZoneIndex++;
     this.currentSectionIndex = 0;
     this.sectionWavesClear = false;
+    this.sectionWavesSpawned = false; // Reset for new zone's sections
     this.zoneProgressed = false;
 
     const zone = this.zoneConfig[this.currentZoneIndex];
@@ -660,6 +677,8 @@ class GameRoom {
       debug: {
         playerCount: this.players.size,
         enemyCount: this.enemies.length,
+        totalKills: this.totalKills,
+        enemiesSpawned: this.enemiesSpawned,
         currentSectionIndex: this.currentSectionIndex,
         sectionClear: this.sectionWavesClear,
         maxX: this.maxRightBound,
