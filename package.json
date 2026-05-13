@@ -4,9 +4,12 @@
   "description": "Multiplayer beat'em up game - CorporateCrawlerBill",
   "private": true,
   "dependencies": {
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-scripts": "5.0.1",
+    "socket.io": "^4.8.3",
     "socket.io-client": "^4.6.1"
   },
   "scripts": {
