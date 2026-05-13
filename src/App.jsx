@@ -803,6 +803,10 @@ function drawZoneBackground(ctx, zoneIndex, worldWidth) {
       ctx.fillRect(650, 200, 100, 150);
       ctx.fillStyle = '#4a4a5a';
       break;
+    default:
+      // Default background for unknown zones
+      ctx.fillStyle = '#0a0a0a';
+      break;
   }
 
   ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
