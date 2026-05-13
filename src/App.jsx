@@ -324,6 +324,8 @@ const BeatEmUpGame = () => {
           </p>
 
           <input
+            id="playerName"
+            name="playerName"
             type="text"
             placeholder="Enter your name"
             value={playerName}
@@ -425,6 +427,8 @@ const BeatEmUpGame = () => {
 
           {!playerName.trim() && (
             <input
+              id="playerNameWarning"
+              name="playerNameWarning"
               type="text"
               placeholder="Enter your name first"
               value={playerName}
