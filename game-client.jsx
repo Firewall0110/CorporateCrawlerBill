@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { io } from 'socket.io-client';
 
 // SERVER CONFIG - Update this after deploying to Railway
-const SERVER_URL = 'http://localhost:3001'; // Change to your Railway URL
+const SERVER_URL = 'https://corporatecrawlerbill-production.up.railway.app';
 
 const BeatEmUpGame = () => {
   const [screen, setScreen] = useState('menu'); // menu, lobby, game
