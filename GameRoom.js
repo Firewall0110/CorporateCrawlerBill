@@ -155,7 +155,8 @@ class GameRoom {
     const deltaTime = (now - this.lastUpdateTime) / 1000;
     this.lastUpdateTime = now;
 
-    if (this.players.size < 2) return; // Need 2+ players to play
+    // Only process game logic if game is actively playing
+    if (this.status !== 'playing') return;
 
     // Update all players
     this.players.forEach(player => {
