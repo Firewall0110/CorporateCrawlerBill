@@ -7,14 +7,14 @@ const Unit = require('./Unit');
 
 class Player extends Unit {
   constructor(socketId, name, color, characterAttributes = []) {
-    // Base stats for players
+    // Base stats for players - SIGNIFICANTLY BOOSTED
     const playerBaseStats = {
-      maxHealth: 100,
-      attack: 10,
-      attackSpeed: 1.0,
-      armor: 5,
-      attackRange: 60,
-      movementSpeed: 1.0
+      maxHealth: 500,
+      attack: 100,
+      attackSpeed: 1.2,
+      armor: 25,
+      attackRange: 80,
+      movementSpeed: 1.5
     };
 
     super(socketId, name, playerBaseStats, { x: 100, y: 350 });

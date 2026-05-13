@@ -30,10 +30,11 @@ class GameRoom {
     this.tickRate = 1000 / 60; // 60 FPS
     this.gameLoop = null;
 
-    // Level system
+    // Level system - Section-based progression
     this.currentZoneIndex = 0;
-    this.currentWaveIndex = 0;
-    this.nextWaveSpawnTime = 0;
+    this.currentSectionIndex = 0;
+    this.sectionWavesClear = false; // Has current section's wave been cleared?
+    this.maxRightBound = 300; // Player can't move beyond this X until section is clear
     this.zoneConfig = this.createZoneConfig();
 
     // All active modifiers from player attributes
@@ -53,74 +54,133 @@ class GameRoom {
   }
 
   /**
-   * Create zone configuration with waves and boss
+   * Create zone configuration with scroll-based sections
+   * Progression: Enter section -> Wave spawns -> Clear wave -> Can advance to next section
    */
   createZoneConfig() {
     return [
       {
         name: 'Parking Lot',
-        scrollRange: { start: 0, end: 500 },
-        waves: [
-          { enemyType: 'printer-ticket', count: 2, delay: 0 },
-          { enemyType: 'email-ticket', count: 3, delay: 3000 },
-          { enemyType: 'printer-ticket', count: 3, delay: 6000 }
+        sections: [
+          {
+            name: 'Parking Lot - Section 1',
+            xRange: { start: 0, end: 300 },
+            waves: [
+              { enemyType: 'printer-ticket', count: 3, spawnX: 150 }
+            ]
+          },
+          {
+            name: 'Parking Lot - Section 2',
+            xRange: { start: 300, end: 600 },
+            waves: [
+              { enemyType: 'email-ticket', count: 3, spawnX: 450 }
+            ]
+          },
+          {
+            name: 'Parking Lot - Section 3',
+            xRange: { start: 600, end: 900 },
+            waves: [
+              { enemyType: 'printer-ticket', count: 4, spawnX: 750 }
+            ]
+          }
         ]
       },
       {
         name: 'Quad',
-        scrollRange: { start: 500, end: 1000 },
-        waves: [
-          { enemyType: 'email-ticket', count: 3, delay: 0 },
-          { enemyType: 'network-ticket', count: 2, delay: 4000 },
-          { enemyType: 'email-ticket', count: 4, delay: 8000 }
+        sections: [
+          {
+            name: 'Quad - Section 1',
+            xRange: { start: 900, end: 1200 },
+            waves: [
+              { enemyType: 'email-ticket', count: 4, spawnX: 1050 }
+            ]
+          },
+          {
+            name: 'Quad - Section 2',
+            xRange: { start: 1200, end: 1500 },
+            waves: [
+              { enemyType: 'network-ticket', count: 3, spawnX: 1350 }
+            ]
+          },
+          {
+            name: 'Quad - Section 3',
+            xRange: { start: 1500, end: 1800 },
+            waves: [
+              { enemyType: 'email-ticket', count: 5, spawnX: 1650 }
+            ]
+          }
         ]
       },
       {
         name: 'Lobby',
-        scrollRange: { start: 1000, end: 1500 },
-        waves: [
-          { enemyType: 'network-ticket', count: 3, delay: 0 },
-          { enemyType: 'printer-ticket', count: 4, delay: 5000 }
+        sections: [
+          {
+            name: 'Lobby - Section 1',
+            xRange: { start: 1800, end: 2100 },
+            waves: [
+              { enemyType: 'network-ticket', count: 4, spawnX: 1950 }
+            ]
+          },
+          {
+            name: 'Lobby - Section 2',
+            xRange: { start: 2100, end: 2400 },
+            waves: [
+              { enemyType: 'printer-ticket', count: 5, spawnX: 2250 }
+            ]
+          },
+          {
+            name: 'Lobby - Section 3',
+            xRange: { start: 2400, end: 2700 },
+            waves: [
+              { enemyType: 'network-ticket', count: 5, spawnX: 2550 }
+            ]
+          }
         ]
       },
       {
         name: 'Elevators',
-        scrollRange: { start: 1500, end: 2000 },
-        isBoss: true
+        sections: [
+          {
+            name: 'Elevators - Boss',
+            xRange: { start: 2700, end: 3000 },
+            isBoss: true,
+            waves: []
+          }
+        ]
       }
     ];
   }
 
   /**
-   * Get base stats for enemy types
+   * Get base stats for enemy types - NERFED FOR BALANCE
    */
   getEnemyBaseStats(enemyType) {
     const stats = {
       'printer-ticket': {
-        maxHealth: 40,
-        attack: 6,
-        attackSpeed: 1.1,
+        maxHealth: 8,
+        attack: 2,
+        attackSpeed: 0.8,
         armor: 0,
         attackRange: 50,
-        movementSpeed: 1.2,
+        movementSpeed: 1.0,
         color: '#FF9900'
       },
       'email-ticket': {
-        maxHealth: 60,
-        attack: 7,
-        attackSpeed: 0.9,
+        maxHealth: 10,
+        attack: 2,
+        attackSpeed: 0.8,
         armor: 0,
         attackRange: 50,
-        movementSpeed: 0.9,
+        movementSpeed: 0.8,
         color: '#3366FF'
       },
       'network-ticket': {
-        maxHealth: 100,
-        attack: 11,
-        attackSpeed: 0.8,
-        armor: 5,
-        attackRange: 60,
-        movementSpeed: 0.7,
+        maxHealth: 15,
+        attack: 3,
+        attackSpeed: 0.7,
+        armor: 1,
+        attackRange: 50,
+        movementSpeed: 0.6,
         color: '#FF3366'
       }
     };
@@ -167,6 +227,12 @@ class GameRoom {
     // Update all players
     this.players.forEach(player => {
       player.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth);
+
+      // Enforce section boundary - can't move right until section is clear
+      if (!this.sectionWavesClear && player.x > this.maxRightBound) {
+        player.x = this.maxRightBound;
+        player.velocityX = 0;
+      }
     });
 
     // Update all enemies
@@ -200,35 +266,69 @@ class GameRoom {
   }
 
   /**
-   * Spawn enemy waves based on zone configuration
+   * Determine which section player is in based on X position
+   */
+  getCurrentSection() {
+    const zone = this.zoneConfig[this.currentZoneIndex];
+    if (!zone || !zone.sections) return null;
+
+    const playerX = Array.from(this.players.values())[0]?.x || 0;
+
+    for (let i = 0; i < zone.sections.length; i++) {
+      const section = zone.sections[i];
+      if (playerX >= section.xRange.start && playerX < section.xRange.end) {
+        return { section, index: i };
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Spawn enemy waves based on section progression
    */
   updateWaveSpawning(now) {
     const zone = this.zoneConfig[this.currentZoneIndex];
-    if (!zone || zone.isBoss) return;
+    if (!zone || !zone.sections) return;
 
-    const waves = zone.waves;
-    if (this.currentWaveIndex >= waves.length) {
-      // Zone complete, move to next
-      console.log(`Zone ${this.currentZoneIndex} complete, advancing...`);
-      this.advanceZone();
-      return;
+    const current = this.getCurrentSection();
+    if (!current) return;
+
+    const { section, index } = current;
+
+    // Check if we've moved to a new section
+    if (index !== this.currentSectionIndex) {
+      this.currentSectionIndex = index;
+      this.sectionWavesClear = false;
+      this.maxRightBound = section.xRange.end;
+      console.log(`[Section] Entered: ${section.name} (section ${index})`);
     }
 
-    const currentWave = waves[this.currentWaveIndex];
-    const timeSinceSpawn = now - this.nextWaveSpawnTime;
+    // Spawn waves in this section if not already spawned
+    if (!this.sectionWavesClear && section.waves && section.waves.length > 0) {
+      const waveSpawned = this.enemies.some(e => {
+        const sectionWaves = section.waves;
+        return sectionWaves.some(w => e.x >= section.xRange.start && e.x <= section.xRange.end);
+      });
 
-    // Debug: Log wave spawning check
-    if (!this.debugWaveLogged) {
-      console.log(`[Wave Spawn Check] Zone: ${zone.name}, CurrentWave: ${this.currentWaveIndex}, NextSpawnTime: ${this.nextWaveSpawnTime}, Now: ${now}, Ready: ${now >= this.nextWaveSpawnTime}`);
-      this.debugWaveLogged = true;
+      if (!waveSpawned) {
+        console.log(`[Section] Spawning waves for: ${section.name}`);
+        section.waves.forEach(waveConfig => {
+          this.spawnWave(waveConfig);
+        });
+      }
     }
 
-    if (now >= this.nextWaveSpawnTime) {
-      // Spawn wave
-      console.log(`Wave spawn time reached! (now=${now}, nextSpawnTime=${this.nextWaveSpawnTime}, delta=${timeSinceSpawn}ms)`);
-      this.spawnWave(currentWave);
-      this.nextWaveSpawnTime = now + 5000; // 5s between waves
-      this.currentWaveIndex++;
+    // Check if section is cleared (no enemies in this section)
+    const enemiesInSection = this.enemies.filter(e =>
+      e.x >= section.xRange.start && e.x <= section.xRange.end
+    );
+
+    if (enemiesInSection.length === 0 && this.enemies.length > 0) {
+      if (!this.sectionWavesClear) {
+        this.sectionWavesClear = true;
+        console.log(`[Section] CLEARED: ${section.name} - You can now advance!`);
+      }
     }
   }
 
@@ -236,15 +336,15 @@ class GameRoom {
    * Spawn an enemy wave
    */
   spawnWave(waveConfig) {
-    const zone = this.zoneConfig[this.currentZoneIndex];
-    const startX = zone.scrollRange.start + 100;
+    // Get spawn X from wave config or use centered position
+    const baseSpawnX = waveConfig.spawnX || 800;
 
-    console.log(`Spawning wave: ${waveConfig.count}x ${waveConfig.enemyType} in zone ${this.currentZoneIndex}`);
+    console.log(`Spawning wave: ${waveConfig.count}x ${waveConfig.enemyType}`);
 
     for (let i = 0; i < waveConfig.count; i++) {
       const enemyId = `${this.id}-enemy-${Date.now()}-${i}`;
       const baseStats = this.getEnemyBaseStats(waveConfig.enemyType);
-      const spawnX = startX + i * 80;
+      const spawnX = baseSpawnX + i * 60; // Spread enemies out
 
       const enemy = new Enemy(
         enemyId,
@@ -270,13 +370,19 @@ class GameRoom {
     }
 
     this.currentZoneIndex++;
-    this.currentWaveIndex = 0;
-    this.nextWaveSpawnTime = Date.now();
+    this.currentSectionIndex = 0;
+    this.sectionWavesClear = false;
+    this.zoneProgressed = false;
 
     const zone = this.zoneConfig[this.currentZoneIndex];
+    const firstSection = zone.sections?.[0];
+
+    if (firstSection) {
+      this.maxRightBound = firstSection.xRange.end;
+    }
 
     // If boss zone, spawn boss
-    if (zone.isBoss) {
+    if (zone.sections && zone.sections[0]?.isBoss) {
       this.spawnBoss();
       this.io.to(this.id).emit('bossEncounter', {
         bossName: 'Critical Priority 1 Outage',
@@ -318,11 +424,21 @@ class GameRoom {
   }
 
   /**
-   * Check level progression (players moving through world)
+   * Check level progression (advance to next zone when current is complete)
    */
   checkZoneProgression() {
-    // Players naturally progress as they fight through zones
-    // Zones advance when all enemies in current wave are defeated
+    const zone = this.zoneConfig[this.currentZoneIndex];
+    if (!zone) return;
+
+    // Check if all sections in zone are complete
+    if (this.currentSectionIndex >= zone.sections.length - 1 && this.sectionWavesClear && this.enemies.length === 0) {
+      // Zone complete!
+      if (!this.zoneProgressed) {
+        this.zoneProgressed = true;
+        console.log(`[Zone] COMPLETED: ${zone.name}`);
+        this.advanceZone();
+      }
+    }
   }
 
   /**
@@ -520,6 +636,9 @@ class GameRoom {
    * Get game state for broadcasting
    */
   getState() {
+    const zone = this.zoneConfig[this.currentZoneIndex];
+    const currentSection = zone?.sections?.[this.currentSectionIndex];
+
     return {
       roomId: this.id,
       roomName: this.name,
@@ -530,16 +649,21 @@ class GameRoom {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       groundLevel: this.groundLevel,
-      currentZone: this.zoneConfig[this.currentZoneIndex],
+      currentZone: zone,
       currentZoneIndex: this.currentZoneIndex,
+      currentSection: currentSection,
+      currentSectionIndex: this.currentSectionIndex,
       zoneCount: this.zoneConfig.length,
+      maxRightBound: this.maxRightBound,
+      sectionClear: this.sectionWavesClear,
       // Debug info
       debug: {
         playerCount: this.players.size,
         enemyCount: this.enemies.length,
-        currentWaveIndex: this.currentWaveIndex,
-        nextWaveSpawnTime: this.nextWaveSpawnTime,
-        hasZoneWaves: this.zoneConfig[this.currentZoneIndex] && !this.zoneConfig[this.currentZoneIndex].isBoss
+        currentSectionIndex: this.currentSectionIndex,
+        sectionClear: this.sectionWavesClear,
+        maxX: this.maxRightBound,
+        playerX: Array.from(this.players.values())[0]?.x || 0
       }
     };
   }
