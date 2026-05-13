@@ -193,9 +193,11 @@ const BeatEmUpGame = () => {
       ctx.stroke();
 
       // Draw all enemies with health bars
-      gameState.enemies.forEach(enemy => {
-        drawUnit(ctx, enemy, cameraX, gameState.groundLevel, false);
-      });
+      if (gameState.enemies && gameState.enemies.length > 0) {
+        gameState.enemies.forEach(enemy => {
+          drawUnit(ctx, enemy, cameraX, gameState.groundLevel, false);
+        });
+      }
 
       // Draw boss if exists
       if (gameState.boss) {
@@ -203,10 +205,12 @@ const BeatEmUpGame = () => {
       }
 
       // Draw all players
-      gameState.players.forEach(player => {
-        const isMe = player.id === playerId;
-        drawUnit(ctx, player, cameraX, gameState.groundLevel, isMe);
-      });
+      if (gameState.players && gameState.players.length > 0) {
+        gameState.players.forEach(player => {
+          const isMe = player.id === playerId;
+          drawUnit(ctx, player, cameraX, gameState.groundLevel, isMe);
+        });
+      }
 
       // Draw HUD
       drawHUD(ctx, gameState, playerId, CANVAS_WIDTH);
@@ -801,6 +805,8 @@ function drawZoneBackground(ctx, zoneIndex, worldWidth) {
  */
 function drawHUD(ctx, gameState, playerId, canvasWidth) {
   // Current player info
+  if (!gameState || !gameState.players || gameState.players.length === 0) return;
+
   const thisPlayer = gameState.players.find(p => p.id === playerId);
   if (thisPlayer && thisPlayer.attributes && thisPlayer.attributes.length > 0) {
     ctx.fillStyle = '#00ffff';
