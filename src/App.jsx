@@ -35,6 +35,10 @@ const BeatEmUpGame = () => {
 
     newSocket.on('gameState', (state) => {
       setGameState(state);
+      // Debug logging
+      if (state.debug && (state.debug.enemyCount > 0 || state.debug.currentWaveIndex > 0)) {
+        console.log(`[GameState] Enemies: ${state.debug.enemyCount}, Wave: ${state.debug.currentWaveIndex}, Zone: ${state.currentZoneIndex}`);
+      }
     });
 
     newSocket.on('roomCreated', ({ roomId: id, playerId: pid, gameState: gs }) => {
@@ -822,6 +826,19 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
       ctx.fillText(`• ${attr.name}`, 15, y);
       y += 11;
     });
+  }
+
+  // Debug info
+  if (gameState.debug) {
+    ctx.fillStyle = '#ff9900';
+    ctx.font = '8px "Press Start 2P", monospace';
+    ctx.textAlign = 'left';
+
+    let debugY = ctx.canvas.height - 60;
+    ctx.fillText(`DEBUG:`, 10, debugY);
+    ctx.fillText(`Enemies: ${gameState.debug.enemyCount}`, 10, debugY + 12);
+    ctx.fillText(`Wave: ${gameState.debug.currentWaveIndex}`, 10, debugY + 24);
+    ctx.fillText(`HasZoneWaves: ${gameState.debug.hasZoneWaves ? 'YES' : 'NO'}`, 10, debugY + 36);
   }
 }
 

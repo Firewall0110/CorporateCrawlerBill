@@ -509,7 +509,15 @@ class GameRoom {
       groundLevel: this.groundLevel,
       currentZone: this.zoneConfig[this.currentZoneIndex],
       currentZoneIndex: this.currentZoneIndex,
-      zoneCount: this.zoneConfig.length
+      zoneCount: this.zoneConfig.length,
+      // Debug info
+      debug: {
+        playerCount: this.players.size,
+        enemyCount: this.enemies.length,
+        currentWaveIndex: this.currentWaveIndex,
+        nextWaveSpawnTime: this.nextWaveSpawnTime,
+        hasZoneWaves: this.zoneConfig[this.currentZoneIndex] && !this.zoneConfig[this.currentZoneIndex].isBoss
+      }
     };
   }
 
