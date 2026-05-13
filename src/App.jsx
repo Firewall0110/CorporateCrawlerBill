@@ -242,12 +242,24 @@ const BeatEmUpGame = () => {
   };
 
   const createRoom = () => {
+    console.log('[CreateRoom] Button clicked', { playerName, socketConnected: socket?.connected });
+
     if (!playerName.trim()) {
+      console.log('[CreateRoom] Name validation failed');
       setError('Please enter your name');
       return;
     }
+
+    if (!socket) {
+      console.log('[CreateRoom] Socket not initialized');
+      setError('Connection error - please refresh');
+      return;
+    }
+
     const roomName = `${playerName}'s Game`;
     const color = '#' + Math.floor(Math.random() * 16777215).toString(16);
+    console.log('[CreateRoom] Emitting createRoom event', { roomName, playerData: { name: playerName, color } });
+
     socket.emit('createRoom', {
       roomName,
       playerData: { name: playerName, color }
