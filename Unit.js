@@ -63,14 +63,16 @@ class Unit {
   /**
    * Recompute effective stats based on all active modifiers
    * Called when: level starts, player joins, player leaves
+   * @param {Array} allActiveModifiers - Array of modifier objects (not attribute objects)
    */
-  recomputeEffectiveStats(allActiveAttributes = []) {
+  recomputeEffectiveStats(allActiveModifiers = []) {
     // Start with base stats
     this.effectiveStats = { ...this.baseStats };
 
     // Apply all modifiers from active player attributes
-    allActiveAttributes.forEach(attr => {
-      const mod = attr.modifier;
+    allActiveModifiers.forEach(mod => {
+      // Each mod is already a modifier object: { target, value, appliesToTeam }
+      if (!mod || !mod.target) return;
 
       // Check if modifier applies to this unit
       const appliesTo = mod.appliesToTeam || 'all';
