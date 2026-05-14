@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
+import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
 
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
@@ -29,6 +30,18 @@ const BeatEmUpGame = () => {
 
   const CANVAS_WIDTH = 1200;
   const CANVAS_HEIGHT = 700; // Expanded to show more vertical space
+
+  // Load Bill sprite sheets on mount (one-time, cached)
+  // Render loop checks getBillSprites() each frame so we don't need React state
+  useEffect(() => {
+    loadBillSprites()
+      .then(() => {
+        console.log('Bill sprites loaded successfully');
+      })
+      .catch(err => {
+        console.warn('Bill sprites failed to load, using procedural fallback:', err);
+      });
+  }, []);
 
   // Initialize socket connection
   useEffect(() => {
@@ -839,6 +852,7 @@ const BeatEmUpGame = () => {
 
 /**
  * Draw a unit with 16-bit style sprite anatomy, animations, and effects
+ * For players (team='players'), uses pre-loaded Bill sprite sheets when available
  */
 function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   if (!unit) return;
@@ -851,7 +865,7 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 
   const w = unit.width;
   const h = unit.height;
-  const cx = screenX + w / 2; // center X
+  const cx = screenX + w / 2;
   const facing = unit.direction || 1;
 
   // Walking bob animation based on horizontal velocity
@@ -863,8 +877,6 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   const flashAlpha = hitFlash ? 1 - ((now - unit.lastHitTime) / 150) : 0;
 
   // Shadow follows unit's ground (depth) position, scales smaller when in air
-  // groundY = where the unit's feet are on the depth plane (not absolute ground)
-  // y < groundY when jumping; difference = jump height
   const unitGroundY = unit.groundY !== undefined ? unit.groundY : groundLevel;
   const jumpHeight = Math.max(0, unitGroundY - screenY);
   const shadowScale = Math.max(0.5, 1 - jumpHeight / 200);
@@ -874,6 +886,14 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   ctx.beginPath();
   ctx.ellipse(cx, unitGroundY + h - 2, (w / 2) * shadowScale, 5 * shadowScale, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // === Use Bill sprite rendering for players if loaded ===
+  const billSprites = getBillSprites();
+  if (unit.team === 'players' && billSprites) {
+    drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now);
+    return;
+  }
+  // Else fall through to procedural rendering for enemies / when sprites not yet loaded
 
   // Skip drawing body if knocked out (fall over animation)
   const koTilt = unit.isKnockedOut ? Math.PI / 2 : 0;
@@ -1007,6 +1027,110 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   if (unit.isKnockedOut) {
     ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
     ctx.font = 'bold 12px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 4;
+    ctx.fillText('K.O.', cx, screenY + h / 2);
+    ctx.shadowBlur = 0;
+  }
+}
+
+/**
+ * Draw Bill using sprite sheets (Corporate Crawler Bill character)
+ * Handles idle, walking, punching, kicking animations + flipping
+ */
+function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now) {
+  const frame = pickBillFrame(unit, now);
+  if (!frame || !frame.sprite || !frame.sprite.canvas) {
+    // Fallback - just draw a placeholder
+    ctx.fillStyle = unit.color || '#888';
+    ctx.fillRect(screenX, screenY, w, h);
+    return;
+  }
+
+  const sprite = frame.sprite;
+  // Scale sprite to fit hitbox height (preserving aspect ratio)
+  // Sprite anchor is at bottom-center (feet)
+  // We want sprite feet at (cx, screenY + h)
+  const drawH = h * 1.25; // Slightly larger than hitbox for visibility
+  const aspect = sprite.canvas.width / sprite.canvas.height;
+  const drawW = drawH * aspect;
+  const cx = screenX + w / 2;
+  const feetY = screenY + h;
+  const drawX = cx - drawW / 2;
+  const drawY = feetY - drawH + bobAmount;
+
+  ctx.save();
+
+  // Player glow effect
+  if (isMe && !unit.isKnockedOut) {
+    ctx.shadowColor = unit.color || '#00ffff';
+    ctx.shadowBlur = 12;
+  }
+
+  // Knockout tilt
+  if (unit.isKnockedOut) {
+    ctx.translate(cx, screenY + h);
+    ctx.rotate((Math.PI / 2) * facing);
+    ctx.translate(-cx, -(screenY + h));
+  }
+
+  // Handle horizontal flip for facing left
+  if (facing < 0) {
+    ctx.translate(drawX + drawW, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sprite.canvas, 0, drawY, drawW, drawH);
+  } else {
+    ctx.drawImage(sprite.canvas, drawX, drawY, drawW, drawH);
+  }
+
+  ctx.shadowBlur = 0;
+
+  // Hit flash overlay
+  if (hitFlash) {
+    // Use globalCompositeOperation to tint the sprite white
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    if (facing < 0) {
+      ctx.fillRect(0, drawY, drawW, drawH);
+    } else {
+      ctx.fillRect(drawX, drawY, drawW, drawH);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  ctx.restore();
+
+  // Health bar (above sprite)
+  if (!unit.isKnockedOut) {
+    const barWidth = w;
+    const barHeight = 4;
+    const barX = screenX;
+    const barY = drawY - 8;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+
+    const healthPercent = unit.health / unit.maxHealth;
+    ctx.fillStyle = healthPercent > 0.5 ? '#00ff66' : healthPercent > 0.25 ? '#ffcc00' : '#ff3333';
+    ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+  }
+
+  // "YOU" label for own character
+  if (isMe) {
+    ctx.fillStyle = '#00ffff';
+    ctx.font = '9px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 4;
+    ctx.fillText('YOU', cx, drawY - 14);
+    ctx.shadowBlur = 0;
+  }
+
+  // K.O. indicator
+  if (unit.isKnockedOut) {
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
+    ctx.font = 'bold 14px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
     ctx.shadowColor = '#000000';
     ctx.shadowBlur = 4;
@@ -1211,83 +1335,315 @@ function drawBoss(ctx, boss, cameraX, groundLevel, now) {
   const screenX = boss.x - cameraX;
   const screenY = boss.y;
 
-  // Only draw if on screen
-  if (screenX + boss.width < 0 || screenX > ctx.canvas.width) return;
+  // === FIRST: Draw attack telegraphs BEHIND boss for layering ===
+  if (boss.currentAttack) {
+    drawBossAttackTelegraph(ctx, boss, cameraX, now);
+  }
+  if (boss.attackZones && boss.attackZones.length > 0) {
+    drawBossTargetZones(ctx, boss.attackZones, cameraX, now);
+  }
 
-  // Glow effect
-  ctx.shadowColor = '#ff00ff';
-  ctx.shadowBlur = 30;
+  // === Draw boss body (only if on screen) ===
+  if (screenX + boss.width >= 0 && screenX <= ctx.canvas.width) {
+    // Charging glow during telegraph (intensity grows)
+    const isCharging = boss.currentAttack && boss.currentAttack.isInTelegram;
+    const chargeIntensity = isCharging ? boss.currentAttack.telegramProgress : 0;
 
-  // Body (larger)
-  ctx.fillStyle = '#ff00ff';
-  ctx.fillRect(screenX - 20, screenY - 20, boss.width + 40, boss.height + 40);
+    if (isCharging) {
+      // Pulsing red glow when charging attack
+      const pulse = Math.sin(now / 100) * 0.5 + 0.5;
+      ctx.shadowColor = '#ff0000';
+      ctx.shadowBlur = 20 + chargeIntensity * 30 + pulse * 10;
+    } else {
+      ctx.shadowColor = '#ff00ff';
+      ctx.shadowBlur = 25;
+    }
+
+    // Boss body - large magenta rectangle
+    const bodyW = boss.width + 40;
+    const bodyH = boss.height + 40;
+    const bodyX = screenX - 20;
+    const bodyY = screenY - 20;
+
+    // Slight wobble when charging
+    const wobble = isCharging ? Math.sin(now / 60) * 3 * chargeIntensity : 0;
+
+    ctx.fillStyle = isCharging ? '#cc00ff' : '#ff00ff';
+    ctx.fillRect(bodyX + wobble, bodyY, bodyW, bodyH);
+
+    // Detail: darker face area
+    ctx.fillStyle = '#660099';
+    ctx.fillRect(bodyX + 10 + wobble, bodyY + 15, bodyW - 20, 25);
+
+    // Glowing eyes
+    const eyeColor = isCharging ? '#ff0000' : '#ffff00';
+    ctx.fillStyle = eyeColor;
+    ctx.fillRect(bodyX + 20 + wobble, bodyY + 25, 12, 8);
+    ctx.fillRect(bodyX + bodyW - 32 + wobble, bodyY + 25, 12, 8);
+
+    // White inner eye glow
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(bodyX + 24 + wobble, bodyY + 28, 4, 4);
+    ctx.fillRect(bodyX + bodyW - 28 + wobble, bodyY + 28, 4, 4);
+
+    // "P1" stamp - the boss is a Priority 1 ticket personified
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffff00';
+    ctx.font = 'bold 14px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('P1', bodyX + bodyW / 2 + wobble, bodyY + bodyH - 12);
+  }
 
   ctx.shadowBlur = 0;
 
-  // Boss health bar (prominent, at top)
-  const bossBarWidth = 200;
-  const bossBarHeight = 20;
+  // === Boss health bar (top of screen) ===
+  const bossBarWidth = 320;
+  const bossBarHeight = 22;
   const bossBarX = ctx.canvas.width / 2 - bossBarWidth / 2;
-  const bossBarY = 30;
+  const bossBarY = 28;
 
-  // Background
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+  ctx.fillRect(bossBarX - 4, bossBarY - 4, bossBarWidth + 8, bossBarHeight + 8);
+
   ctx.fillStyle = '#1a1a1a';
   ctx.fillRect(bossBarX, bossBarY, bossBarWidth, bossBarHeight);
 
-  // Health fill
   const healthPercent = boss.health / boss.maxHealth;
   if (healthPercent > 0.5) ctx.fillStyle = '#ff3366';
-  else if (healthPercent > 0.25) ctx.fillStyle = '#ffff00';
+  else if (healthPercent > 0.25) ctx.fillStyle = '#ffaa00';
   else ctx.fillStyle = '#ff0000';
-
   ctx.fillRect(bossBarX, bossBarY, bossBarWidth * healthPercent, bossBarHeight);
 
-  // Border
+  // Segmented divisions on health bar
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 10; i++) {
+    const x = bossBarX + (bossBarWidth / 10) * i;
+    ctx.beginPath();
+    ctx.moveTo(x, bossBarY);
+    ctx.lineTo(x, bossBarY + bossBarHeight);
+    ctx.stroke();
+  }
+
   ctx.strokeStyle = '#ff00ff';
   ctx.lineWidth = 3;
   ctx.strokeRect(bossBarX, bossBarY, bossBarWidth, bossBarHeight);
 
-  // Label
-  ctx.fillStyle = '#ff00ff';
-  ctx.font = 'bold 12px "Press Start 2P", monospace';
-  ctx.textAlign = 'left';
-  ctx.fillText('BOSS', bossBarX + 10, bossBarY + 15);
-
-  // Health text
+  // Boss name
   ctx.fillStyle = '#ffffff';
-  ctx.font = '10px "Press Start 2P", monospace';
+  ctx.font = 'bold 10px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#000000';
+  ctx.shadowBlur = 3;
+  ctx.fillText('CRITICAL PRIORITY 1 OUTAGE', ctx.canvas.width / 2, bossBarY - 6);
+  ctx.shadowBlur = 0;
+
+  // Health number
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '9px "Press Start 2P", monospace';
   ctx.textAlign = 'right';
-  ctx.fillText(`${Math.round(boss.health)}/${Math.round(boss.maxHealth)}`, bossBarX + bossBarWidth - 10, bossBarY + 15);
+  ctx.fillText(`${Math.round(boss.health)}/${Math.round(boss.maxHealth)}`,
+    bossBarX + bossBarWidth - 6, bossBarY + 15);
+}
 
-  // Draw attack telegrams
-  if (boss.currentAttack) {
-    if (boss.currentAttack.isInTelegram) {
-      ctx.fillStyle = 'rgba(255, 0, 102, 0.3)';
-      ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+/**
+ * Draw boss attack telegraph - one per attack type, all clearly visible
+ */
+function drawBossAttackTelegraph(ctx, boss, cameraX, now) {
+  const atk = boss.currentAttack;
+  if (!atk) return;
 
-      ctx.fillStyle = '#ff0066';
-      ctx.font = 'bold 16px "Press Start 2P", monospace';
+  // Convert world coordinates to screen
+  const bossScreenX = (atk.bossX !== undefined ? atk.bossX : boss.x) - cameraX;
+  const bossScreenY = (atk.bossY !== undefined ? atk.bossY : boss.y);
+
+  // === SHOCKWAVE TELEGRAPH ===
+  if (atk.type === 'shockwave') {
+    const maxRadius = atk.radius || 220;
+
+    if (atk.isInTelegram) {
+      // Telegraph: pulsing red preview circle on ground
+      const pulse = Math.sin(now / 80) * 0.3 + 0.7;
+      const previewRadius = maxRadius * (0.3 + atk.telegramProgress * 0.7);
+
+      // Filled red zone preview
+      ctx.fillStyle = `rgba(255, 0, 0, ${0.15 + atk.telegramProgress * 0.25})`;
+      ctx.beginPath();
+      ctx.ellipse(bossScreenX + boss.width / 2, bossScreenY + boss.height,
+        previewRadius, previewRadius * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Pulsing outline
+      ctx.strokeStyle = `rgba(255, 0, 0, ${pulse})`;
+      ctx.lineWidth = 3 + atk.telegramProgress * 4;
+      ctx.beginPath();
+      ctx.ellipse(bossScreenX + boss.width / 2, bossScreenY + boss.height,
+        previewRadius, previewRadius * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Warning text
+      ctx.fillStyle = '#ff3333';
+      ctx.font = 'bold 12px "Press Start 2P", monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(`${boss.currentAttack.name} INCOMING!`, ctx.canvas.width / 2, 100);
-    }
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 4;
+      ctx.fillText('JUMP OR MOVE BACK!', ctx.canvas.width / 2, 90);
+      ctx.shadowBlur = 0;
+    } else {
+      // Damage phase: shockwave ring expanding outward
+      const shockRadius = maxRadius * atk.damageProgress;
+      const opacity = 1 - atk.damageProgress;
 
-    // Draw attack zones for ServiceRestarts pattern
-    if (boss.currentAttack.type === 'zones' && boss.attackZones) {
-      boss.attackZones.forEach(zone => {
-        const zoneScreenX = zone.x - cameraX;
-        ctx.strokeStyle = zone.hasDetonated ? '#ff0000' : '#ff9900';
-        ctx.lineWidth = 2;
-        ctx.beginPath();
-        ctx.arc(zoneScreenX, zone.y, zone.radius, 0, Math.PI * 2);
-        ctx.stroke();
+      // Outer wave
+      ctx.strokeStyle = `rgba(255, 100, 0, ${opacity})`;
+      ctx.lineWidth = 10;
+      ctx.shadowColor = '#ff6600';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.ellipse(bossScreenX + boss.width / 2, bossScreenY + boss.height,
+        shockRadius, shockRadius * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
 
-        if (!zone.hasDetonated) {
-          ctx.fillStyle = 'rgba(255, 153, 0, 0.2)';
-          ctx.fill();
-        }
-      });
+      // Inner wave
+      ctx.strokeStyle = `rgba(255, 255, 0, ${opacity * 0.8})`;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.ellipse(bossScreenX + boss.width / 2, bossScreenY + boss.height,
+        shockRadius * 0.85, shockRadius * 0.34, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.shadowBlur = 0;
     }
   }
+
+  // === LASER BEAM TELEGRAPH ===
+  if (atk.type === 'laserBeam') {
+    const beamY = atk.laserStartY !== undefined ? atk.laserStartY : bossScreenY;
+    const beamScreenY = beamY + boss.height / 2;
+    const halfWidth = (atk.beamWidth || 50) / 2;
+    const direction = atk.direction || 1;
+
+    if (atk.isInTelegram) {
+      // Aim sight line - red laser pointer
+      const alpha = 0.3 + atk.telegramProgress * 0.6;
+      const blink = Math.sin(now / 60) > 0 ? 1 : 0.5;
+
+      // Thin red sight line across entire screen
+      ctx.strokeStyle = `rgba(255, 0, 0, ${alpha * blink})`;
+      ctx.lineWidth = 1 + atk.telegramProgress * 2;
+      ctx.beginPath();
+      ctx.moveTo(0, beamScreenY);
+      ctx.lineTo(ctx.canvas.width, beamScreenY);
+      ctx.stroke();
+
+      // Warning band shows where damage will be
+      ctx.fillStyle = `rgba(255, 0, 0, ${0.1 + atk.telegramProgress * 0.15})`;
+      const beamStartX = direction > 0 ? bossScreenX + boss.width : 0;
+      const beamEndX = direction > 0 ? ctx.canvas.width : bossScreenX;
+      ctx.fillRect(beamStartX, beamScreenY - halfWidth,
+        beamEndX - beamStartX, halfWidth * 2);
+
+      // Boss is aiming - draw aim indicators
+      const indicatorSize = 8 + Math.sin(now / 100) * 4;
+      ctx.fillStyle = '#ff0000';
+      ctx.beginPath();
+      ctx.arc(bossScreenX + boss.width / 2, beamScreenY - 30, indicatorSize, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Warning text
+      ctx.fillStyle = '#00ffff';
+      ctx.font = 'bold 12px "Press Start 2P", monospace';
+      ctx.textAlign = 'center';
+      ctx.shadowColor = '#000';
+      ctx.shadowBlur = 4;
+      ctx.fillText('DODGE WITH W/S!', ctx.canvas.width / 2, 90);
+      ctx.shadowBlur = 0;
+    } else {
+      // Firing! Bright cyan laser beam
+      const opacity = 1 - atk.damageProgress;
+      const beamStartX = direction > 0 ? bossScreenX + boss.width : 0;
+      const beamEndX = direction > 0 ? ctx.canvas.width : bossScreenX;
+
+      // Outer beam (cyan)
+      ctx.fillStyle = `rgba(0, 220, 255, ${opacity * 0.8})`;
+      ctx.shadowColor = '#00ffff';
+      ctx.shadowBlur = 25;
+      ctx.fillRect(beamStartX, beamScreenY - halfWidth,
+        beamEndX - beamStartX, halfWidth * 2);
+
+      // Inner beam (white core)
+      ctx.fillStyle = `rgba(255, 255, 255, ${opacity})`;
+      ctx.fillRect(beamStartX, beamScreenY - halfWidth * 0.4,
+        beamEndX - beamStartX, halfWidth * 0.8);
+      ctx.shadowBlur = 0;
+    }
+  }
+}
+
+/**
+ * Draw target zones for "Service Restarts" attack
+ * Zones are clearly visible, pulse during telegraph, then explode
+ */
+function drawBossTargetZones(ctx, zones, cameraX, now) {
+  zones.forEach(zone => {
+    const screenX = zone.x - cameraX;
+    if (screenX < -100 || screenX > ctx.canvas.width + 100) return;
+
+    if (!zone.hasDetonated) {
+      // Telegraph: pulsing orange/yellow warning circle
+      const tp = zone.telegraphProgress || 0;
+      const pulse = Math.sin(now / 80) * 0.3 + 0.7;
+      const colorMix = tp; // 0 = orange, 1 = red
+
+      // Fill - intensity grows during telegraph
+      const r = Math.floor(255);
+      const g = Math.floor(180 - colorMix * 180);
+      const b = 0;
+      ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.2 + tp * 0.3})`;
+      ctx.beginPath();
+      ctx.ellipse(screenX, zone.y + 30, zone.radius, zone.radius * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Outline - pulses
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${pulse})`;
+      ctx.lineWidth = 3 + tp * 3;
+      ctx.beginPath();
+      ctx.ellipse(screenX, zone.y + 30, zone.radius, zone.radius * 0.4, 0, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Crosshair in center to mark target
+      ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${pulse})`;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(screenX - 10, zone.y + 30);
+      ctx.lineTo(screenX + 10, zone.y + 30);
+      ctx.moveTo(screenX, zone.y + 25);
+      ctx.lineTo(screenX, zone.y + 35);
+      ctx.stroke();
+
+      // Countdown bar (visual representation of time remaining)
+      const barW = zone.radius * 1.5;
+      const barH = 4;
+      const barX = screenX - barW / 2;
+      const barY = zone.y - zone.radius * 0.5 - 10;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+      ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.fillRect(barX, barY, barW * tp, barH);
+    } else {
+      // Explosion! Bright red burst
+      ctx.fillStyle = 'rgba(255, 80, 0, 0.5)';
+      ctx.beginPath();
+      ctx.ellipse(screenX, zone.y + 30, zone.radius * 1.1, zone.radius * 0.45, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Inner blast (yellow/white)
+      ctx.fillStyle = 'rgba(255, 255, 100, 0.7)';
+      ctx.beginPath();
+      ctx.ellipse(screenX, zone.y + 30, zone.radius * 0.7, zone.radius * 0.3, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
 }
 
 /**
