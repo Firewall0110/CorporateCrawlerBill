@@ -205,7 +205,7 @@ class Unit {
   }
 
   /**
-   * Start an attack
+   * Start an attack - Different mechanics for punch/kick/special
    */
   performAttack(attackType = 'punch') {
     // Check if can attack
@@ -216,6 +216,7 @@ class Unit {
     this.isAttacking = true;
     this.attackStartTime = Date.now();
     this.hasHit = false;
+    this.attackType = attackType;
 
     // Get cooldown from effective stats
     const cooldown = 0.5 / this.effectiveStats.attackSpeed;
@@ -223,22 +224,28 @@ class Unit {
     // Set attack properties based on type
     switch (attackType) {
       case 'punch':
-        this.attackRange = 60;
+        // Quick jab - hits one enemy at close range
+        this.attackRange = 50;
         this.attackPower = Math.round(this.effectiveStats.attack * 1.0);
-        this.attackDuration = 200;
-        this.attackCooldown = cooldown;
+        this.attackDuration = 150; // Very quick (2-3 frames at 60fps)
+        this.attackCooldown = cooldown * 0.6; // Fast recovery
+        this.attackRadius = 30; // Small radius - single target
         break;
       case 'kick':
-        this.attackRange = 70;
+        // Longer kick - hits multiple enemies, extends further
+        this.attackRange = 100;
         this.attackPower = Math.round(this.effectiveStats.attack * 1.5);
-        this.attackDuration = 300;
-        this.attackCooldown = cooldown;
+        this.attackDuration = 350; // Slower, longer animation
+        this.attackCooldown = cooldown * 1.2; // Slower recovery
+        this.attackRadius = 60; // Larger radius - hits multiple
         break;
       case 'special':
-        this.attackRange = 100;
+        // Area clear - big AoE attack
+        this.attackRange = 150;
         this.attackPower = Math.round(this.effectiveStats.attack * 2.5);
-        this.attackDuration = 500;
-        this.attackCooldown = cooldown;
+        this.attackDuration = 500; // Long, dramatic animation
+        this.attackCooldown = cooldown * 2.5; // Very slow recovery
+        this.attackRadius = 120; // Huge radius - clears area
         break;
     }
 
@@ -246,17 +253,18 @@ class Unit {
   }
 
   /**
-   * Handle movement input
+   * Handle movement input - includes up/down for 4-direction movement
    */
   handleInput(input, groundLevel = 350) {
     if (this.isKnockedOut) return;
 
     const speed = 4 * this.effectiveStats.movementSpeed;
 
-    // Reset horizontal velocity
+    // Reset velocities
     this.velocityX = 0;
+    let verticalVelocity = 0;
 
-    // Movement
+    // Horizontal movement
     if (input.left) {
       this.velocityX = -speed;
       this.direction = -1;
@@ -266,8 +274,20 @@ class Unit {
       this.direction = 1;
     }
 
-    // Jump
-    if (input.jump && !this.isJumping && this.y >= groundLevel) {
+    // Vertical movement (up/down) - direct Y axis movement, not affected by gravity
+    if (input.up) {
+      verticalVelocity = -speed;
+    }
+    if (input.down) {
+      verticalVelocity = speed;
+    }
+
+    // Apply vertical movement if present, otherwise use gravity
+    if (verticalVelocity !== 0) {
+      this.y += verticalVelocity;
+      this.isJumping = false;
+    } else if (input.jump && !this.isJumping && this.y >= groundLevel) {
+      // Jump (only when on ground and not moving vertically)
       this.velocityY = -15;
       this.isJumping = true;
     }

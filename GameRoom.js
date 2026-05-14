@@ -20,11 +20,11 @@ class GameRoom {
     this.createdAt = Date.now();
     this.lastUpdateTime = Date.now();
 
-    // World settings
+    // World settings - expanded for 4-direction movement
     this.worldWidth = 2000;
-    this.worldHeight = 400;
+    this.worldHeight = 800; // Doubled height for vertical movement
     this.gravity = 0.8;
-    this.groundLevel = 350;
+    this.groundLevel = 600; // Adjusted for taller world
 
     // Game loop
     this.tickRate = 1000 / 60; // 60 FPS
@@ -45,6 +45,10 @@ class GameRoom {
     this.totalKills = 0;
     this.enemiesSpawned = 0;
     this.spawnedEnemyIds = new Set(); // Track which enemies have been spawned
+
+    // Player death tracking
+    this.playerDeadTime = null;
+    this.playerDeadSocketId = null;
 
     // Auto-start timer (game starts 3 seconds after room creation)
     this.autoStartTimer = setTimeout(() => {
@@ -158,13 +162,13 @@ class GameRoom {
   }
 
   /**
-   * Get base stats for enemy types - NERFED FOR BALANCE
+   * Get base stats for enemy types - 2-3 hits to kill
    */
   getEnemyBaseStats(enemyType) {
     const stats = {
       'printer-ticket': {
-        maxHealth: 8,
-        attack: 2,
+        maxHealth: 20,
+        attack: 3,
         attackSpeed: 0.8,
         armor: 0,
         attackRange: 50,
@@ -172,8 +176,8 @@ class GameRoom {
         color: '#FF9900'
       },
       'email-ticket': {
-        maxHealth: 10,
-        attack: 2,
+        maxHealth: 25,
+        attack: 4,
         attackSpeed: 0.8,
         armor: 0,
         attackRange: 50,
@@ -181,8 +185,8 @@ class GameRoom {
         color: '#3366FF'
       },
       'network-ticket': {
-        maxHealth: 15,
-        attack: 3,
+        maxHealth: 40,
+        attack: 6,
         attackSpeed: 0.7,
         armor: 1,
         attackRange: 50,
@@ -471,15 +475,29 @@ class GameRoom {
     players.forEach(attacker => {
       if (!attacker.isAttacking || attacker.hasHit) return;
 
+      const hitRadius = attacker.attackRadius || 60;
+      let hitAny = false;
+
       allEnemies.forEach(target => {
         const distance = Math.abs(attacker.x - target.x);
         const verticalDistance = Math.abs(attacker.y - target.y);
 
+        // Check if target is in range
         if (distance < attacker.effectiveStats.attackRange && verticalDistance < 50) {
           this.applyDamage(attacker, target);
-          attacker.hasHit = true;
+          hitAny = true;
+
+          // For kicks and specials, check radius for multi-hit
+          if (attacker.attackType === 'kick' || attacker.attackType === 'special') {
+            // Already hit, can hit others in radius
+          }
         }
       });
+
+      // Mark as hit after hitting at least one enemy
+      if (hitAny) {
+        attacker.hasHit = true;
+      }
     });
 
     // Enemy attacks on players
@@ -521,10 +539,23 @@ class GameRoom {
     // Check for knockout
     if (target.health <= 0) {
       target.isKnockedOut = true;
-      this.io.to(this.id).emit('playerKnockedOut', {
-        playerId: target.id,
-        knockedOutBy: attacker.id
-      });
+
+      // If it's a player, trigger game over
+      if (target.team === 'players') {
+        this.playerDeadTime = Date.now();
+        this.playerDeadSocketId = target.id;
+        console.log(`[GameOver] Player ${target.id} died!`);
+        this.io.to(this.id).emit('playerDied', {
+          playerId: target.id,
+          knockedOutBy: attacker.id
+        });
+      } else {
+        // Enemy knockout
+        this.io.to(this.id).emit('playerKnockedOut', {
+          playerId: target.id,
+          knockedOutBy: attacker.id
+        });
+      }
     }
   }
 
@@ -650,6 +681,31 @@ class GameRoom {
   }
 
   /**
+   * Respawn a dead player (continue game)
+   */
+  respawnPlayer(socketId) {
+    const player = this.players.get(socketId);
+    if (player) {
+      // Reset player stats
+      player.health = player.maxHealth;
+      player.isKnockedOut = false;
+      player.x = 100; // Reset to start position
+      player.y = this.groundLevel;
+      player.velocityX = 0;
+      player.velocityY = 0;
+
+      // Clear death state
+      this.playerDeadTime = null;
+      this.playerDeadSocketId = null;
+
+      console.log(`[Respawn] Player ${socketId} continued!`);
+      this.io.to(this.id).emit('playerRespawned', {
+        playerId: socketId
+      });
+    }
+  }
+
+  /**
    * Get game state for broadcasting
    */
   getState() {
@@ -673,6 +729,8 @@ class GameRoom {
       zoneCount: this.zoneConfig.length,
       maxRightBound: this.maxRightBound,
       sectionClear: this.sectionWavesClear,
+      playerDead: this.playerDeadSocketId ? true : false,
+      deadPlayerId: this.playerDeadSocketId,
       // Debug info
       debug: {
         playerCount: this.players.size,

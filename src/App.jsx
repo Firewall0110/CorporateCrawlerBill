@@ -20,7 +20,7 @@ const BeatEmUpGame = () => {
   const animationFrameRef = useRef(null);
 
   const CANVAS_WIDTH = 1200;
-  const CANVAS_HEIGHT = 500;
+  const CANVAS_HEIGHT = 700; // Expanded to show more vertical space
 
   // Initialize socket connection
   useEffect(() => {
@@ -68,6 +68,14 @@ const BeatEmUpGame = () => {
 
     newSocket.on('playerKnockedOut', ({ playerId: pid, knockedOutBy }) => {
       console.log(`Player ${pid} knocked out`);
+    });
+
+    newSocket.on('playerDied', ({ playerId: pid }) => {
+      console.log(`Player ${pid} died! Game Over!`);
+    });
+
+    newSocket.on('playerRespawned', ({ playerId: pid }) => {
+      console.log(`Player ${pid} respawned!`);
     });
 
     newSocket.on('gameStarted', () => {
@@ -129,7 +137,9 @@ const BeatEmUpGame = () => {
       const input = {
         left: keysPressed.current['a'] || keysPressed.current['arrowleft'],
         right: keysPressed.current['d'] || keysPressed.current['arrowright'],
-        jump: keysPressed.current['w'] || keysPressed.current['arrowup'] || keysPressed.current[' ']
+        jump: keysPressed.current['w'] || keysPressed.current['arrowup'] || keysPressed.current[' '],
+        up: keysPressed.current['w'] || keysPressed.current['arrowup'], // Vertical movement up
+        down: keysPressed.current['s'] || keysPressed.current['arrowdown'] // Vertical movement down
       };
 
       socket.emit('playerInput', { roomId, input });
@@ -567,21 +577,80 @@ const BeatEmUpGame = () => {
           </div>
 
           {/* Canvas */}
-          <canvas
-            ref={canvasRef}
-            width={CANVAS_WIDTH}
-            height={CANVAS_HEIGHT}
-            style={{
-              flex: 1,
-              maxWidth: '100%',
-              maxHeight: 'calc(100vh - 160px)',
-              margin: '0 auto',
-              border: '3px solid #00ffff',
-              boxShadow: '0 0 40px rgba(0, 255, 255, 0.3)',
-              background: '#0a0a0a',
-              display: 'block'
-            }}
-          />
+          <div style={{ position: 'relative', flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+            <canvas
+              ref={canvasRef}
+              width={CANVAS_WIDTH}
+              height={CANVAS_HEIGHT}
+              style={{
+                flex: 1,
+                maxWidth: '100%',
+                maxHeight: 'calc(100vh - 160px)',
+                margin: '0 auto',
+                border: '3px solid #00ffff',
+                boxShadow: '0 0 40px rgba(0, 255, 255, 0.3)',
+                background: '#0a0a0a',
+                display: 'block'
+              }}
+            />
+
+            {/* Game Over Screen */}
+            {gameState?.playerDead && (
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0, 0, 0, 0.85)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                zIndex: 100
+              }}>
+                <div style={{
+                  textAlign: 'center',
+                  fontFamily: '"Press Start 2P", monospace',
+                  color: '#ff3333'
+                }}>
+                  <h1 style={{ fontSize: '40px', marginBottom: '30px', textShadow: '0 0 20px #ff3333' }}>
+                    GAME OVER
+                  </h1>
+                  <p style={{ fontSize: '18px', marginBottom: '40px', color: '#ffff00' }}>
+                    You were defeated!
+                  </p>
+                  <button
+                    onClick={() => {
+                      socket.emit('playerContinue', { roomId });
+                    }}
+                    style={{
+                      padding: '20px 40px',
+                      fontSize: '16px',
+                      fontFamily: '"Press Start 2P", monospace',
+                      background: '#00ff00',
+                      color: '#000000',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 0 20px rgba(0, 255, 0, 0.5)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.background = '#33ff33';
+                      e.target.style.boxShadow = '0 0 40px rgba(0, 255, 0, 0.8)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.background = '#00ff00';
+                      e.target.style.boxShadow = '0 0 20px rgba(0, 255, 0, 0.5)';
+                    }}
+                  >
+                    CONTINUE
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           {/* Bottom HUD */}
           <div style={{
@@ -594,7 +663,8 @@ const BeatEmUpGame = () => {
             fontSize: '9px',
             flexWrap: 'wrap'
           }}>
-            <span>A/D: MOVE</span>
+            <span>A/D: LEFT/RIGHT</span>
+            <span>W/S: UP/DOWN</span>
             <span>SPACE: JUMP</span>
             <span>J: PUNCH</span>
             <span>K: KICK</span>

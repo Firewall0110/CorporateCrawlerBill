@@ -114,6 +114,14 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle player respawn (continue after game over)
+  socket.on('playerContinue', ({ roomId }) => {
+    const room = gameRooms.get(roomId);
+    if (room) {
+      room.respawnPlayer(socket.id);
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`Player disconnected: ${socket.id}`);
