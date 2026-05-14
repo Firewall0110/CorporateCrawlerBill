@@ -670,7 +670,35 @@ class GameRoom {
     // Recompute boss if exists
     if (this.boss) {
       this.boss.recomputeEffectiveStats(this.activeModifiers);
+
+      // Also rescale boss health based on current player count
+      this.rescaleBossHealth();
     }
+  }
+
+  /**
+   * Rescale boss health based on current player count
+   */
+  rescaleBossHealth() {
+    if (!this.boss) return;
+
+    const playerCount = this.players.size;
+    const healthMultiplier = 1 + (playerCount - 1) * 0.25;
+    const newMaxHealth = Math.round(300 * healthMultiplier);
+
+    // Adjust current health proportionally to the new max health
+    if (this.boss.maxHealth > 0) {
+      const healthRatio = this.boss.health / this.boss.maxHealth;
+      this.boss.maxHealth = newMaxHealth;
+      this.boss.effectiveStats.maxHealth = newMaxHealth;
+      this.boss.health = Math.round(newMaxHealth * healthRatio);
+    } else {
+      this.boss.maxHealth = newMaxHealth;
+      this.boss.effectiveStats.maxHealth = newMaxHealth;
+      this.boss.health = newMaxHealth;
+    }
+
+    console.log(`[Boss] Rescaled health to ${Math.round(this.boss.health)}/${newMaxHealth} (${playerCount} players)`);
   }
 
   /**
