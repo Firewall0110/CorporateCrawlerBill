@@ -187,15 +187,14 @@ const BeatEmUpGame = () => {
 
     const render = () => {
       // Clear canvas
-      ctx.fillStyle = '#0a0a0a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      // Draw zone background based on current zone
-      drawZoneBackground(ctx, gameState.currentZoneIndex, gameState.worldWidth);
-
-      // Draw ground
-      ctx.fillStyle = '#16213e';
-      ctx.fillRect(0, gameState.groundLevel, canvas.width, canvas.height - gameState.groundLevel);
+      // Draw parallax scrolling background
+      drawParallaxBackground(
+        ctx,
+        gameState.currentZoneIndex,
+        cameraX,
+        gameState.worldWidth,
+        gameState.worldHeight
+      );
 
       // Draw ground line
       ctx.strokeStyle = '#00ffff';
@@ -842,7 +841,212 @@ function drawBoss(ctx, boss, cameraX, groundLevel) {
 }
 
 /**
- * Draw zone-specific background
+ * Draw parallax scrolling 16-bit campus background
+ */
+function drawParallaxBackground(ctx, zoneIndex, cameraX, worldWidth, worldHeight) {
+  // Sky gradient
+  const gradient = ctx.createLinearGradient(0, 0, 0, worldHeight);
+  gradient.addColorStop(0, '#1a3a5c'); // Dark blue top
+  gradient.addColorStop(0.5, '#3a6a9c'); // Medium blue
+  gradient.addColorStop(1, '#5a9acc'); // Light blue bottom
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, worldWidth, worldHeight);
+
+  // Get zone-specific colors
+  const zoneColors = {
+    0: { sky: '#1a3a5c', building: '#4a6a8a', accent: '#ff9900' }, // Parking Lot
+    1: { sky: '#2a4a6c', building: '#3a7a4a', accent: '#33ff66' }, // Quad
+    2: { sky: '#3a3a6c', building: '#5a5a8a', accent: '#3366ff' }, // Lobby
+    3: { sky: '#1a1a3c', building: '#4a3a6a', accent: '#ff3366' }  // Elevators
+  };
+  const colors = zoneColors[zoneIndex] || zoneColors[0];
+
+  // Layer 1: Distant mountains/sky (slowest - 0.2x)
+  drawDistantMountains(ctx, cameraX * 0.2, worldWidth, worldHeight, colors);
+
+  // Layer 2: Background buildings (0.4x parallax)
+  drawBackgroundBuildings(ctx, cameraX * 0.4, worldWidth, worldHeight, colors);
+
+  // Layer 3: Mid-ground structures (0.6x parallax)
+  drawMidgroundElements(ctx, cameraX * 0.6, worldWidth, worldHeight, zoneIndex, colors);
+
+  // Layer 4: Trees and decorations (0.8x parallax)
+  drawForegroundTrees(ctx, cameraX * 0.8, worldWidth, worldHeight, colors);
+
+  // Layer 5: Ground details (1.0x - moves with camera)
+  drawGroundDetails(ctx, cameraX, worldWidth, worldHeight, zoneIndex);
+}
+
+/**
+ * Draw distant mountains/clouds
+ */
+function drawDistantMountains(ctx, scrollX, worldWidth, worldHeight, colors) {
+  ctx.fillStyle = 'rgba(100, 140, 180, 0.3)';
+
+  // Draw clouds
+  for (let i = -1; i < worldWidth / 200; i++) {
+    const x = (i * 200 - scrollX) % (worldWidth + 400);
+    // Cloud shape made of rectangles
+    ctx.fillRect(x, 50, 80, 30);
+    ctx.fillRect(x + 30, 30, 80, 30);
+    ctx.fillRect(x + 60, 50, 80, 30);
+  }
+}
+
+/**
+ * Draw background tall buildings
+ */
+function drawBackgroundBuildings(ctx, scrollX, worldWidth, worldHeight, colors) {
+  ctx.fillStyle = colors.building;
+
+  // Distant office building towers
+  for (let i = -1; i < worldWidth / 300; i++) {
+    const x = (i * 300 - scrollX) % (worldWidth + 400);
+
+    // Main building
+    ctx.fillRect(x, 150, 80, 300);
+
+    // Windows
+    ctx.fillStyle = '#ffff99';
+    for (let row = 0; row < 15; row++) {
+      for (let col = 0; col < 3; col++) {
+        ctx.fillRect(x + 10 + col * 20, 160 + row * 20, 12, 12);
+      }
+    }
+
+    // Roof
+    ctx.fillStyle = '#333333';
+    ctx.fillRect(x, 140, 80, 10);
+
+    // Return to building color
+    ctx.fillStyle = colors.building;
+  }
+}
+
+/**
+ * Draw mid-ground elements (buildings, server racks)
+ */
+function drawMidgroundElements(ctx, scrollX, worldWidth, worldHeight, zoneIndex, colors) {
+  if (zoneIndex === 0) {
+    // Parking Lot - cars and parking structures
+    ctx.fillStyle = '#cc4444';
+    for (let i = -1; i < worldWidth / 250; i++) {
+      const x = (i * 250 - scrollX) % (worldWidth + 400);
+      // Parked car
+      ctx.fillRect(x, 450, 60, 40);
+      ctx.fillRect(x + 15, 430, 20, 20); // Window
+    }
+  } else if (zoneIndex === 1) {
+    // Quad - benches and pavilion
+    ctx.fillStyle = '#8B4513';
+    for (let i = -1; i < worldWidth / 300; i++) {
+      const x = (i * 300 - scrollX) % (worldWidth + 400);
+      ctx.fillRect(x, 520, 80, 20); // Bench
+      ctx.fillRect(x + 35, 480, 10, 40); // Bench support
+    }
+  } else if (zoneIndex === 2) {
+    // Lobby - entrance structure
+    ctx.fillStyle = '#5a5a7a';
+    for (let i = -1; i < worldWidth / 350; i++) {
+      const x = (i * 350 - scrollX) % (worldWidth + 400);
+      ctx.fillRect(x, 400, 100, 200); // Lobby building
+      ctx.fillRect(x + 20, 420, 30, 40); // Door
+      ctx.fillRect(x + 60, 420, 30, 40); // Door
+    }
+  } else if (zoneIndex === 3) {
+    // Elevators - server racks and tech
+    ctx.fillStyle = '#3a3a5a';
+    for (let i = -1; i < worldWidth / 200; i++) {
+      const x = (i * 200 - scrollX) % (worldWidth + 400);
+      // Server rack
+      ctx.fillRect(x, 480, 40, 120);
+      ctx.fillStyle = '#ff0000';
+      for (let j = 0; j < 6; j++) {
+        ctx.fillRect(x + 5, 490 + j * 18, 30, 8);
+      }
+      ctx.fillStyle = '#3a3a5a';
+    }
+  }
+}
+
+/**
+ * Draw foreground trees and obstacles
+ */
+function drawForegroundTrees(ctx, scrollX, worldWidth, worldHeight, colors) {
+  ctx.fillStyle = '#2a5a2a';
+
+  // Trees
+  for (let i = -1; i < worldWidth / 200; i++) {
+    const x = (i * 200 - scrollX) % (worldWidth + 400);
+
+    // Trunk
+    ctx.fillStyle = '#8B4513';
+    ctx.fillRect(x + 15, 480, 20, 60);
+
+    // Foliage - blocky tree shape
+    ctx.fillStyle = '#2a7a2a';
+    ctx.fillRect(x, 420, 50, 50); // Bottom
+    ctx.fillRect(x + 5, 380, 40, 40); // Middle
+    ctx.fillRect(x + 10, 350, 30, 30); // Top
+  }
+}
+
+/**
+ * Draw ground-level details
+ */
+function drawGroundDetails(ctx, cameraX, worldWidth, worldHeight, zoneIndex) {
+  if (zoneIndex === 0) {
+    // Parking Lot - road markings
+    ctx.strokeStyle = '#ffff00';
+    ctx.lineWidth = 4;
+    for (let i = -1; i < worldWidth / 100; i++) {
+      const x = i * 100 - (cameraX % 100);
+      ctx.beginPath();
+      ctx.moveTo(x, worldHeight - 50);
+      ctx.lineTo(x + 40, worldHeight - 50);
+      ctx.stroke();
+    }
+  } else if (zoneIndex === 1) {
+    // Quad - grass pattern
+    ctx.fillStyle = 'rgba(100, 180, 100, 0.3)';
+    for (let i = 0; i < 20; i++) {
+      for (let j = 0; j < 10; j++) {
+        const x = (i * 100 - (cameraX % 100)) % worldWidth;
+        const y = 550 + j * 30;
+        if (Math.random() > 0.7) {
+          ctx.fillRect(x, y, 20, 20);
+        }
+      }
+    }
+  } else if (zoneIndex === 2) {
+    // Lobby - tile pattern
+    ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
+    ctx.lineWidth = 2;
+    for (let i = -1; i < worldWidth / 50; i++) {
+      const x = i * 50 - (cameraX % 50);
+      ctx.beginPath();
+      ctx.moveTo(x, 580);
+      ctx.lineTo(x, 620);
+      ctx.stroke();
+    }
+  } else if (zoneIndex === 3) {
+    // Elevators - metal floor grating
+    ctx.strokeStyle = 'rgba(150, 150, 150, 0.5)';
+    ctx.lineWidth = 1;
+    for (let i = -1; i < worldWidth / 30; i++) {
+      const x = i * 30 - (cameraX % 30);
+      for (let j = 580; j < 620; j += 15) {
+        ctx.beginPath();
+        ctx.moveTo(x, j);
+        ctx.lineTo(x + 15, j);
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+/**
+ * Draw zone-specific background (OLD - kept for compatibility)
  */
 function drawZoneBackground(ctx, zoneIndex, worldWidth) {
   ctx.fillStyle = '#0a0a0a';
