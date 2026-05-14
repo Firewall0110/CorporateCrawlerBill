@@ -3,6 +3,10 @@ const Enemy = require('./Enemy');
 const Boss = require('./Boss');
 const { getRandomAttribute } = require('./CharacterAttributes');
 
+// Debug flag - set to true for verbose logging
+const DEBUG = process.env.DEBUG === 'true';
+const debugLog = (...args) => { if (DEBUG) console.log(...args); };
+
 /**
  * GameRoom - Manages a single multiplayer game session
  * Handles players, enemies, level progression, stat management
@@ -38,13 +42,18 @@ class GameRoom {
     this.maxRightBound = 300; // Player can't move beyond this X until section is clear
     this.zoneConfig = this.createZoneConfig();
 
+    // Track which sections have already been spawned (prevents respawn on backtracking)
+    // Key format: "zoneIndex-sectionIndex"
+    this.spawnedSections = new Set();
+    // Track which sections have been cleared (persists across backtracking)
+    this.clearedSections = new Set();
+
     // All active modifiers from player attributes
     this.activeModifiers = [];
 
     // Kill tracking
     this.totalKills = 0;
     this.enemiesSpawned = 0;
-    this.spawnedEnemyIds = new Set(); // Track which enemies have been spawned
 
     // Player death tracking
     this.playerDeadTime = null;
@@ -231,7 +240,7 @@ class GameRoom {
 
     // Debug: Log first time we reach this point
     if (!this.debugUpdateLogged) {
-      console.log(`[GameRoom ${this.id}] Game update running! Status: ${this.status}, NextWaveTime: ${this.nextWaveSpawnTime}, Now: ${now}, Waves in zone: ${this.zoneConfig[this.currentZoneIndex]?.waves?.length}`);
+      debugLog(`[GameRoom ${this.id}] Game update running! Status: ${this.status}`);
       this.debugUpdateLogged = true;
     }
 
@@ -268,7 +277,7 @@ class GameRoom {
     const deadEnemies = this.enemies.filter(enemy => enemy.isKnockedOut && enemy.health <= 0);
     deadEnemies.forEach(enemy => {
       this.totalKills++;
-      console.log(`[Kill] #${this.totalKills}: ${enemy.name} (Total: ${this.totalKills})`);
+      debugLog(`[Kill] #${this.totalKills}: ${enemy.name}`);
     });
     this.enemies = this.enemies.filter(enemy => !enemy.isKnockedOut || enemy.health > 0);
 
@@ -302,6 +311,7 @@ class GameRoom {
 
   /**
    * Spawn enemy waves based on section progression
+   * FIXED: Tracks spawned/cleared sections globally to prevent respawning on backtrack
    */
   updateWaveSpawning(now) {
     const zone = this.zoneConfig[this.currentZoneIndex];
@@ -311,34 +321,48 @@ class GameRoom {
     if (!current) return;
 
     const { section, index } = current;
+    const sectionKey = `${this.currentZoneIndex}-${index}`;
 
     // Check if we've moved to a new section
     if (index !== this.currentSectionIndex) {
       this.currentSectionIndex = index;
-      this.sectionWavesClear = false;
-      this.sectionWavesSpawned = false; // Reset spawn flag for new section
-      this.maxRightBound = section.xRange.end;
-      console.log(`[Section] Entered: ${section.name} (section ${index})`);
+      // Restore clear state from history (don't reset if already cleared)
+      this.sectionWavesClear = this.clearedSections.has(sectionKey);
+      this.sectionWavesSpawned = this.spawnedSections.has(sectionKey);
+
+      // Only restrict bound if this section isn't already cleared
+      if (!this.sectionWavesClear) {
+        this.maxRightBound = section.xRange.end;
+      } else {
+        // Already cleared - allow free movement
+        this.maxRightBound = this.worldWidth;
+      }
     }
 
-    // Spawn waves in this section ONCE and only once
-    if (!this.sectionWavesSpawned && section.waves && section.waves.length > 0) {
-      console.log(`[Section] Spawning waves for: ${section.name}`);
+    // Spawn waves in this section ONCE - tracked globally to prevent respawn on backtrack
+    if (!this.spawnedSections.has(sectionKey) && section.waves && section.waves.length > 0) {
       section.waves.forEach(waveConfig => {
         this.spawnWave(waveConfig);
       });
-      this.sectionWavesSpawned = true; // Mark as spawned - never spawn again for this section
+      this.spawnedSections.add(sectionKey);
+      this.sectionWavesSpawned = true;
     }
 
-    // Check if section is cleared (no enemies in this section)
-    const enemiesInSection = this.enemies.filter(e =>
-      e.x >= section.xRange.start && e.x <= section.xRange.end
+    // Check if section is cleared - count ONLY ALIVE enemies in section
+    const aliveEnemiesInSection = this.enemies.filter(e =>
+      !e.isKnockedOut &&
+      e.health > 0 &&
+      e.x >= section.xRange.start &&
+      e.x <= section.xRange.end
     );
 
-    if (enemiesInSection.length === 0 && this.enemies.length > 0) {
+    // Section is cleared if: waves were spawned AND no alive enemies in section
+    if (this.spawnedSections.has(sectionKey) && aliveEnemiesInSection.length === 0) {
       if (!this.sectionWavesClear) {
         this.sectionWavesClear = true;
-        console.log(`[Section] CLEARED: ${section.name} - You can now advance!`);
+        this.clearedSections.add(sectionKey);
+        this.maxRightBound = this.worldWidth; // Allow advancing
+        debugLog(`[Section] CLEARED: ${section.name}`);
       }
     }
   }
@@ -350,16 +374,11 @@ class GameRoom {
     // Get spawn X from wave config or use centered position
     const baseSpawnX = waveConfig.spawnX || 800;
 
-    console.log(`[Spawn] Wave: ${waveConfig.count}x ${waveConfig.enemyType}`);
+    debugLog(`[Spawn] ${waveConfig.count}x ${waveConfig.enemyType}`);
 
     for (let i = 0; i < waveConfig.count; i++) {
-      const enemyId = `${this.id}-enemy-${Date.now()}-${Math.random()}`; // Ensure unique IDs
-
-      // Don't spawn if already spawned
-      if (this.spawnedEnemyIds.has(enemyId)) {
-        console.log(`[Spawn] Skipped duplicate: ${enemyId}`);
-        continue;
-      }
+      // Use counter + random for guaranteed uniqueness
+      const enemyId = `${this.id}-e${this.enemiesSpawned}-${Math.random().toString(36).substring(2, 8)}`;
 
       const baseStats = this.getEnemyBaseStats(waveConfig.enemyType);
       const spawnX = baseSpawnX + i * 60; // Spread enemies out
@@ -375,10 +394,7 @@ class GameRoom {
       enemy.recomputeEffectiveStats(this.activeModifiers);
 
       this.enemies.push(enemy);
-      this.spawnedEnemyIds.add(enemyId);
       this.enemiesSpawned++;
-
-      console.log(`[Spawn] Created #${this.enemiesSpawned}: ${enemy.name} at x=${spawnX}`);
     }
   }
 
@@ -455,7 +471,7 @@ class GameRoom {
     // Apply modifiers to boss
     this.boss.recomputeEffectiveStats(this.activeModifiers);
 
-    console.log(`[Boss] Spawned at x=${centerX} with ${Math.round(bossStats.maxHealth)} health (${playerCount} players)`);
+    debugLog(`[Boss] Spawned at x=${centerX} with ${Math.round(bossStats.maxHealth)} health (${playerCount} players)`);
   }
 
   /**
@@ -470,7 +486,7 @@ class GameRoom {
       // Zone complete!
       if (!this.zoneProgressed) {
         this.zoneProgressed = true;
-        console.log(`[Zone] COMPLETED: ${zone.name}`);
+        debugLog(`[Zone] COMPLETED: ${zone.name}`);
         this.advanceZone();
       }
     }
@@ -532,22 +548,42 @@ class GameRoom {
 
   /**
    * Apply damage from attacker to target
+   * Attack-type-specific damage multipliers and knockback
    */
   applyDamage(attacker, target) {
-    const damage = attacker.effectiveStats.attack;
+    // Base damage from attacker's effective attack
+    let damage = attacker.effectiveStats.attack;
+    let knockbackForce = 5;
+
+    // Apply attack type multipliers (matching Unit.performAttack mechanics)
+    if (attacker.attackType === 'kick') {
+      damage *= 1.5;
+      knockbackForce = 8;
+    } else if (attacker.attackType === 'special') {
+      damage *= 2.5;
+      knockbackForce = 12;
+    }
+
     target.takeDamage(damage);
+
+    // Mark target as recently hit (for hit flash effect on client)
+    target.lastHitTime = Date.now();
 
     // Knockback
     const direction = target.x > attacker.x ? 1 : -1;
-    target.applyKnockback(direction, 5);
+    target.applyKnockback(direction, knockbackForce);
 
-    // Broadcast hit event
+    // Broadcast hit event with position for damage numbers
     this.io.to(this.id).emit('playerHit', {
       attackerId: attacker.id,
       targetId: target.id,
       damage: Math.round(damage),
       targetHealth: target.health,
-      isEnemy: target.team === 'enemies'
+      targetX: target.x,
+      targetY: target.y,
+      attackType: attacker.attackType || 'punch',
+      isEnemy: target.team === 'enemies' || target.team === 'boss',
+      isCritical: attacker.attackType === 'special'
     });
 
     // Check for knockout
@@ -558,7 +594,7 @@ class GameRoom {
       if (target.team === 'players') {
         this.playerDeadTime = Date.now();
         this.playerDeadSocketId = target.id;
-        console.log(`[GameOver] Player ${target.id} died!`);
+        debugLog(`[GameOver] Player ${target.id} died!`);
         this.io.to(this.id).emit('playerDied', {
           playerId: target.id,
           knockedOutBy: attacker.id
@@ -567,7 +603,9 @@ class GameRoom {
         // Enemy knockout
         this.io.to(this.id).emit('playerKnockedOut', {
           playerId: target.id,
-          knockedOutBy: attacker.id
+          knockedOutBy: attacker.id,
+          targetX: target.x,
+          targetY: target.y
         });
       }
     }
@@ -624,7 +662,7 @@ class GameRoom {
       this.status = 'playing';
       // Initialize wave spawning timer when game starts
       this.nextWaveSpawnTime = Date.now();
-      console.log(`Game started! First wave will spawn at ${this.nextWaveSpawnTime}`);
+      debugLog(`Game started! First wave will spawn at ${this.nextWaveSpawnTime}`);
       this.io.to(this.id).emit('gameStarted');
     }
   }
@@ -699,7 +737,7 @@ class GameRoom {
       this.boss.health = newMaxHealth;
     }
 
-    console.log(`[Boss] Rescaled health to ${Math.round(this.boss.health)}/${newMaxHealth} (${playerCount} players)`);
+    debugLog(`[Boss] Rescaled health to ${Math.round(this.boss.health)}/${newMaxHealth} (${playerCount} players)`);
   }
 
   /**
@@ -740,7 +778,7 @@ class GameRoom {
       this.playerDeadTime = null;
       this.playerDeadSocketId = null;
 
-      console.log(`[Respawn] Player ${socketId} continued!`);
+      debugLog(`[Respawn] Player ${socketId} continued!`);
       this.io.to(this.id).emit('playerRespawned', {
         playerId: socketId
       });

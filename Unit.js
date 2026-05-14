@@ -41,6 +41,8 @@ class Unit {
     this.attackCooldown = 0;
     this.hasHit = false;
     this.isKnockedOut = false;
+    this.lastHitTime = 0; // Used for hit flash effect on client
+    this.attackType = 'punch'; // Tracks last attack type for animations
 
     // Movement state
     this.isJumping = false;
@@ -158,7 +160,10 @@ class Unit {
       direction: this.direction,
       color: this.color,
       sprite: this.sprite,
-      team: this.team
+      team: this.team,
+      velocityX: this.velocityX, // For walking animation
+      lastHitTime: this.lastHitTime, // For hit flash effect
+      attackType: this.attackType // For attack visual differentiation
     };
   }
 
