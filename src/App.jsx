@@ -213,9 +213,9 @@ const BeatEmUpGame = () => {
       const input = {
         left: keysPressed.current['a'] || keysPressed.current['arrowleft'],
         right: keysPressed.current['d'] || keysPressed.current['arrowright'],
-        jump: keysPressed.current['w'] || keysPressed.current['arrowup'] || keysPressed.current[' '],
-        up: keysPressed.current['w'] || keysPressed.current['arrowup'], // Vertical movement up
-        down: keysPressed.current['s'] || keysPressed.current['arrowdown'] // Vertical movement down
+        jump: keysPressed.current[' '], // SPACE only - W is for depth movement
+        up: keysPressed.current['w'] || keysPressed.current['arrowup'], // Move up in depth plane
+        down: keysPressed.current['s'] || keysPressed.current['arrowdown'] // Move down in depth plane
       };
 
       socket.emit('playerInput', { roomId, input });

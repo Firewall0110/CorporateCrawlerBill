@@ -283,6 +283,26 @@ class GameRoom {
     });
     this.enemies = this.enemies.filter(enemy => !enemy.isKnockedOut || enemy.health > 0);
 
+    // Centralized player death detection - catches deaths from ALL sources
+    // (regular combat, boss attacks, etc.) Only triggers once until respawn
+    if (!this.playerDeadSocketId) {
+      for (const [socketId, player] of this.players.entries()) {
+        if (player.health <= 0 && !player.isKnockedOut) {
+          player.isKnockedOut = true;
+          player.health = 0;
+        }
+        if (player.health <= 0 && player.isKnockedOut) {
+          this.playerDeadTime = Date.now();
+          this.playerDeadSocketId = socketId;
+          debugLog(`[GameOver] Player ${socketId} died!`);
+          this.io.to(this.id).emit('playerDied', {
+            playerId: socketId
+          });
+          break;
+        }
+      }
+    }
+
     // Boss defeat
     if (this.boss && this.boss.isKnockedOut) {
       this.levelComplete();
@@ -595,21 +615,12 @@ class GameRoom {
       isCritical: attacker.attackType === 'special'
     });
 
-    // Check for knockout
+    // Check for knockout (player deaths are handled centrally in update loop)
     if (target.health <= 0) {
       target.isKnockedOut = true;
 
-      // If it's a player, trigger game over
-      if (target.team === 'players') {
-        this.playerDeadTime = Date.now();
-        this.playerDeadSocketId = target.id;
-        debugLog(`[GameOver] Player ${target.id} died!`);
-        this.io.to(this.id).emit('playerDied', {
-          playerId: target.id,
-          knockedOutBy: attacker.id
-        });
-      } else {
-        // Enemy knockout
+      // Enemy knockouts - emit immediately for VFX
+      if (target.team !== 'players') {
         this.io.to(this.id).emit('playerKnockedOut', {
           playerId: target.id,
           knockedOutBy: attacker.id,
