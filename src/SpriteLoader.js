@@ -22,24 +22,28 @@ const SPRITE_SHEETS = {
 };
 
 /**
- * Check if a pixel is part of the transparency checker pattern
- * Common checker colors are around (200, 200, 200) light and (150, 150, 150) dark
+ * Check if a pixel is "checker-gray" (grayscale and in the brightness range
+ * used by the JPG transparency-checker background)
+ *
+ * Captures both the light (~200) and dark (~150) checker squares,
+ * plus all the JPG-compressed boundary pixels between them.
  */
-function isCheckerPixel(r, g, b) {
-  // Must be near-grayscale (low color saturation)
-  const isGrayish = Math.abs(r - g) < 15 && Math.abs(g - b) < 15 && Math.abs(r - b) < 15;
-  if (!isGrayish) return false;
-
-  // Light checker (~200,200,200)
-  if (r >= 190 && r <= 215 && g >= 190 && g <= 215 && b >= 190 && b <= 215) return true;
-  // Dark checker (~150,150,150)
-  if (r >= 140 && r <= 165 && g >= 140 && g <= 165 && b >= 140 && b <= 165) return true;
-
-  return false;
+function isCheckerGray(r, g, b) {
+  // Must be near-grayscale: R ≈ G ≈ B
+  const maxC = Math.max(r, g, b);
+  const minC = Math.min(r, g, b);
+  if (maxC - minC > 22) return false; // Has color saturation - not gray
+  // In the checker brightness band (covers ~150 to ~210 with JPG noise)
+  const avg = (r + g + b) / 3;
+  return avg >= 125 && avg <= 225;
 }
 
 /**
  * Process an image to remove checker background → transparency
+ *
+ * Strategy: flood fill from all 4 edges, marking connected gray pixels as
+ * transparent. This preserves interior gray details (like dog tags) because
+ * they aren't connected to the image edge through gray pixels.
  */
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -49,14 +53,63 @@ function processSheet(img) {
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(img, 0, 0);
 
-  // Get pixel data
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const w = canvas.width;
+  const h = canvas.height;
+  const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
+  const visited = new Uint8Array(w * h);
 
-  // First pass: chroma-key checker pattern → transparent
+  // Stack-based flood fill (DFS) - much faster than queue.shift()
+  const stack = [];
+
+  // Seed all edge pixels
+  for (let x = 0; x < w; x++) {
+    stack.push(x, 0);            // top edge: y=0
+    stack.push(x, h - 1);        // bottom edge: y=h-1
+  }
+  for (let y = 0; y < h; y++) {
+    stack.push(0, y);            // left edge: x=0
+    stack.push(w - 1, y);        // right edge: x=w-1
+  }
+
+  while (stack.length > 0) {
+    const y = stack.pop();
+    const x = stack.pop();
+    if (x < 0 || x >= w || y < 0 || y >= h) continue;
+    const ptr = y * w + x;
+    if (visited[ptr]) continue;
+    visited[ptr] = 1;
+
+    const idx = ptr * 4;
+    if (!isCheckerGray(data[idx], data[idx + 1], data[idx + 2])) continue;
+
+    data[idx + 3] = 0; // alpha = transparent
+
+    // Spread to 4-connected neighbors
+    stack.push(x + 1, y);
+    stack.push(x - 1, y);
+    stack.push(x, y + 1);
+    stack.push(x, y - 1);
+  }
+
+  // Second pass: clean up any remaining standalone gray pixels at edges
+  // (in case some boundary pixels are slightly above the grayscale threshold)
+  // This catches the JPG noise halo right at the character outline.
   for (let i = 0; i < data.length; i += 4) {
-    if (isCheckerPixel(data[i], data[i + 1], data[i + 2])) {
-      data[i + 3] = 0; // alpha = 0
+    if (data[i + 3] === 0) continue;
+    if (isCheckerGray(data[i], data[i + 1], data[i + 2])) {
+      // Only kill if at least one neighbor is already transparent (i.e., edge contact)
+      const ptr = i / 4;
+      const x = ptr % w;
+      const y = (ptr - x) / w;
+      const hasTransparentNeighbor =
+        (x > 0 && data[((y * w) + (x - 1)) * 4 + 3] === 0) ||
+        (x < w - 1 && data[((y * w) + (x + 1)) * 4 + 3] === 0) ||
+        (y > 0 && data[(((y - 1) * w) + x) * 4 + 3] === 0) ||
+        (y < h - 1 && data[(((y + 1) * w) + x) * 4 + 3] === 0);
+      if (hasTransparentNeighbor) {
+        data[i + 3] = 0;
+      }
     }
   }
 
