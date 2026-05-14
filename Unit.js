@@ -113,6 +113,9 @@ class Unit {
 
     this.health -= finalDamage;
 
+    // Reset attack cooldown when hit (can't attack right after being hit)
+    this.attackCooldown = 0.5 / this.effectiveStats.attackSpeed;
+
     if (this.health <= 0) {
       this.health = 0;
       this.isKnockedOut = true;

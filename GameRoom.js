@@ -76,21 +76,21 @@ class GameRoom {
             name: 'Parking Lot - Section 1',
             xRange: { start: 0, end: 300 },
             waves: [
-              { enemyType: 'printer-ticket', count: 3, spawnX: 150 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 150 }
             ]
           },
           {
             name: 'Parking Lot - Section 2',
             xRange: { start: 300, end: 600 },
             waves: [
-              { enemyType: 'email-ticket', count: 3, spawnX: 450 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 450 }
             ]
           },
           {
             name: 'Parking Lot - Section 3',
             xRange: { start: 600, end: 900 },
             waves: [
-              { enemyType: 'printer-ticket', count: 4, spawnX: 750 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 750 }
             ]
           }
         ]
@@ -102,21 +102,21 @@ class GameRoom {
             name: 'Quad - Section 1',
             xRange: { start: 900, end: 1200 },
             waves: [
-              { enemyType: 'email-ticket', count: 3, spawnX: 1050 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 1050 }
             ]
           },
           {
             name: 'Quad - Section 2',
             xRange: { start: 1200, end: 1500 },
             waves: [
-              { enemyType: 'network-ticket', count: 3, spawnX: 1350 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 1350 }
             ]
           },
           {
             name: 'Quad - Section 3',
             xRange: { start: 1500, end: 1800 },
             waves: [
-              { enemyType: 'email-ticket', count: 4, spawnX: 1650 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 1650 }
             ]
           }
         ]
@@ -128,21 +128,21 @@ class GameRoom {
             name: 'Lobby - Section 1',
             xRange: { start: 1800, end: 2100 },
             waves: [
-              { enemyType: 'network-ticket', count: 3, spawnX: 1950 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 1950 }
             ]
           },
           {
             name: 'Lobby - Section 2',
             xRange: { start: 2100, end: 2400 },
             waves: [
-              { enemyType: 'printer-ticket', count: 4, spawnX: 2250 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 2250 }
             ]
           },
           {
             name: 'Lobby - Section 3',
             xRange: { start: 2400, end: 2700 },
             waves: [
-              { enemyType: 'network-ticket', count: 3, spawnX: 2550 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 2550 }
             ]
           }
         ]
@@ -170,7 +170,7 @@ class GameRoom {
       'printer-ticket': {
         maxHealth: 100,    // 5 punches to kill
         attack: 3,
-        attackSpeed: 0.8,
+        attackSpeed: 0.4,  // Reduced from 0.8 - half attack frequency
         armor: 0,
         attackRange: 50,
         movementSpeed: 1.0,
@@ -179,7 +179,7 @@ class GameRoom {
       'email-ticket': {
         maxHealth: 110,    // 5-6 punches to kill, or 4 kicks
         attack: 4,
-        attackSpeed: 0.8,
+        attackSpeed: 0.4,  // Reduced from 0.8 - half attack frequency
         armor: 0,
         attackRange: 50,
         movementSpeed: 0.8,
@@ -188,7 +188,7 @@ class GameRoom {
       'network-ticket': {
         maxHealth: 130,    // 7 punches to kill, or 4-5 kicks
         attack: 6,
-        attackSpeed: 0.7,
+        attackSpeed: 0.35, // Reduced from 0.7 - half attack frequency
         armor: 1,
         attackRange: 50,
         movementSpeed: 0.6,
