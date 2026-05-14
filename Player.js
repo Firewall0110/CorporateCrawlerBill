@@ -7,10 +7,10 @@ const Unit = require('./Unit');
 
 class Player extends Unit {
   constructor(socketId, name, color, characterAttributes = []) {
-    // Base stats for players - SIGNIFICANTLY BOOSTED
+    // Base stats for players
     const playerBaseStats = {
       maxHealth: 500,
-      attack: 100,
+      attack: 20,        // Reduced from 100 - punch does 20 damage (5 hits to kill)
       attackSpeed: 1.2,
       armor: 25,
       attackRange: 80,

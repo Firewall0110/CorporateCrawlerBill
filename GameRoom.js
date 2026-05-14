@@ -102,7 +102,7 @@ class GameRoom {
             name: 'Quad - Section 1',
             xRange: { start: 900, end: 1200 },
             waves: [
-              { enemyType: 'email-ticket', count: 4, spawnX: 1050 }
+              { enemyType: 'email-ticket', count: 3, spawnX: 1050 }
             ]
           },
           {
@@ -116,7 +116,7 @@ class GameRoom {
             name: 'Quad - Section 3',
             xRange: { start: 1500, end: 1800 },
             waves: [
-              { enemyType: 'email-ticket', count: 5, spawnX: 1650 }
+              { enemyType: 'email-ticket', count: 4, spawnX: 1650 }
             ]
           }
         ]
@@ -128,21 +128,21 @@ class GameRoom {
             name: 'Lobby - Section 1',
             xRange: { start: 1800, end: 2100 },
             waves: [
-              { enemyType: 'network-ticket', count: 4, spawnX: 1950 }
+              { enemyType: 'network-ticket', count: 3, spawnX: 1950 }
             ]
           },
           {
             name: 'Lobby - Section 2',
             xRange: { start: 2100, end: 2400 },
             waves: [
-              { enemyType: 'printer-ticket', count: 5, spawnX: 2250 }
+              { enemyType: 'printer-ticket', count: 4, spawnX: 2250 }
             ]
           },
           {
             name: 'Lobby - Section 3',
             xRange: { start: 2400, end: 2700 },
             waves: [
-              { enemyType: 'network-ticket', count: 5, spawnX: 2550 }
+              { enemyType: 'network-ticket', count: 3, spawnX: 2550 }
             ]
           }
         ]
@@ -162,12 +162,13 @@ class GameRoom {
   }
 
   /**
-   * Get base stats for enemy types - 2-3 hits to kill
+   * Get base stats for enemy types
+   * Punch (20 dmg): ~5 hits to kill | Kick (30 dmg): ~3 hits to kill
    */
   getEnemyBaseStats(enemyType) {
     const stats = {
       'printer-ticket': {
-        maxHealth: 20,
+        maxHealth: 100,    // 5 punches to kill
         attack: 3,
         attackSpeed: 0.8,
         armor: 0,
@@ -176,7 +177,7 @@ class GameRoom {
         color: '#FF9900'
       },
       'email-ticket': {
-        maxHealth: 25,
+        maxHealth: 110,    // 5-6 punches to kill, or 4 kicks
         attack: 4,
         attackSpeed: 0.8,
         armor: 0,
@@ -185,7 +186,7 @@ class GameRoom {
         color: '#3366FF'
       },
       'network-ticket': {
-        maxHealth: 40,
+        maxHealth: 130,    // 7 punches to kill, or 4-5 kicks
         attack: 6,
         attackSpeed: 0.7,
         armor: 1,
