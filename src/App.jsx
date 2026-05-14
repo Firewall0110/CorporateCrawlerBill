@@ -1390,8 +1390,6 @@ function drawMidgroundBuildings(ctx, tiles, scrollX, canvasW, zoneIndex) {
  * Ground is the main play surface - tiled with zone-specific tiles
  */
 function drawTiledGround(ctx, tiles, scrollX, canvasW, canvasH, zoneIndex) {
-  // Back wall (above play area)
-  const backWallY = 380;
   const playFloorY = 380; // Start of play floor
   const groundEndY = 700;
 
@@ -1437,7 +1435,6 @@ function drawTiledGround(ctx, tiles, scrollX, canvasW, canvasH, zoneIndex) {
     const tw = primaryTile.width; // 32
     const th = primaryTile.height; // 32
     const startX = -((scrollX % tw) + tw) % tw;
-    let tileX = 0;
     for (let x = startX; x < canvasW; x += tw) {
       for (let y = playFloorY; y < groundEndY; y += th) {
         // Decide which tile to use (stripe accent every 5th tile row in parking lot)
@@ -1455,7 +1452,6 @@ function drawTiledGround(ctx, tiles, scrollX, canvasW, canvasH, zoneIndex) {
         const tileToUse = useAccent && accentTile ? accentTile : primaryTile;
         ctx.drawImage(tileToUse, Math.floor(x), Math.floor(y));
       }
-      tileX++;
     }
   }
 

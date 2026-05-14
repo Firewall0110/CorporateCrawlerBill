@@ -656,4 +656,5 @@ export function fillTiled(ctx, tile, x, y, w, h, scrollX = 0) {
   }
 }
 
-export default { getTileset, fillTiled };
+const TilesetModule = { getTileset, fillTiled };
+export default TilesetModule;
