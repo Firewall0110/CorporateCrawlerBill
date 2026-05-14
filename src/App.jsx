@@ -1048,55 +1048,6 @@ function drawGroundDetails(ctx, cameraX, worldWidth, worldHeight, zoneIndex) {
 /**
  * Draw zone-specific background (OLD - kept for compatibility)
  */
-function drawZoneBackground(ctx, zoneIndex, worldWidth) {
-  ctx.fillStyle = '#0a0a0a';
-
-  switch (zoneIndex) {
-    case 0: // Parking Lot
-      ctx.fillStyle = '#4a4a5a';
-      // Yellow parking lines
-      ctx.strokeStyle = '#ffff00';
-      ctx.lineWidth = 3;
-      for (let i = 0; i < worldWidth; i += 200) {
-        ctx.beginPath();
-        ctx.moveTo(i, 200);
-        ctx.lineTo(i + 100, 200);
-        ctx.stroke();
-      }
-      break;
-    case 1: // Quad
-      ctx.fillStyle = '#2d5a2d';
-      // Trees
-      ctx.fillStyle = '#1a3a1a';
-      for (let i = 100; i < worldWidth; i += 400) {
-        ctx.fillRect(i, 250, 60, 100);
-      }
-      ctx.fillStyle = '#2d5a2d';
-      break;
-    case 2: // Lobby
-      ctx.fillStyle = '#5a5a6a';
-      // Reception desk silhouette
-      ctx.fillStyle = '#3a3a4a';
-      ctx.fillRect(500, 200, 300, 150);
-      ctx.fillStyle = '#5a5a6a';
-      break;
-    case 3: // Elevators
-      ctx.fillStyle = '#4a4a5a';
-      // Elevator doors
-      ctx.fillStyle = '#888888';
-      ctx.fillRect(500, 200, 100, 150);
-      ctx.fillRect(650, 200, 100, 150);
-      ctx.fillStyle = '#4a4a5a';
-      break;
-    default:
-      // Default background for unknown zones
-      ctx.fillStyle = '#0a0a0a';
-      break;
-  }
-
-  ctx.fillRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-}
-
 /**
  * Draw HUD overlay
  */

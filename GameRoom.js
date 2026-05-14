@@ -422,10 +422,21 @@ class GameRoom {
    */
   spawnBoss() {
     const zone = this.zoneConfig[this.currentZoneIndex];
-    const centerX = (zone.scrollRange.start + zone.scrollRange.end) / 2;
+    if (!zone || !zone.sections || !zone.sections[0]) {
+      console.error('Cannot spawn boss: invalid zone');
+      return;
+    }
+
+    // Use boss section's xRange to calculate center position
+    const bossSection = zone.sections[0];
+    const centerX = (bossSection.xRange.start + bossSection.xRange.end) / 2;
+
+    // Boss stats scale with player count (0.25x per player)
+    const playerCount = this.players.size;
+    const healthMultiplier = 1 + (playerCount - 1) * 0.25;
 
     const bossStats = {
-      maxHealth: 300,
+      maxHealth: Math.round(300 * healthMultiplier),
       attack: 18,
       attackSpeed: 1.0,
       armor: 20,
@@ -442,6 +453,8 @@ class GameRoom {
 
     // Apply modifiers to boss
     this.boss.recomputeEffectiveStats(this.activeModifiers);
+
+    console.log(`[Boss] Spawned at x=${centerX} with ${Math.round(bossStats.maxHealth)} health (${playerCount} players)`);
   }
 
   /**
