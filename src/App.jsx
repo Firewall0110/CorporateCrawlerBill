@@ -115,7 +115,8 @@ const BeatEmUpGame = () => {
     const handleKeyDown = (e) => {
       keysPressed.current[e.key.toLowerCase()] = true;
 
-      if (['a', 'd', 'w', 's', ' ', 'j', 'k', 'l'].includes(e.key.toLowerCase())) {
+      // Only prevent default for game controls when actually in the game
+      if (screen === 'game' && ['a', 'd', 'w', 's', ' ', 'j', 'k', 'l'].includes(e.key.toLowerCase())) {
         e.preventDefault();
       }
     };
@@ -131,7 +132,7 @@ const BeatEmUpGame = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [screen]);
 
   // Send input to server
   useEffect(() => {
