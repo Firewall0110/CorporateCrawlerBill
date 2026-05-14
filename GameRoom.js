@@ -25,7 +25,8 @@ class GameRoom {
     this.lastUpdateTime = Date.now();
 
     // World settings - expanded for 4-direction movement
-    this.worldWidth = 2000;
+    // Width must accommodate all section xRanges (last section ends at 2700, boss at 3000)
+    this.worldWidth = 3200; // Allows full progression through all zones + boss arena
     this.worldHeight = 800; // Doubled height for vertical movement
     this.gravity = 0.8;
     this.groundLevel = 600; // Adjusted for taller world
