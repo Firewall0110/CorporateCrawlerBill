@@ -14,6 +14,7 @@ const BeatEmUpGame = () => {
   const [availableRooms, setAvailableRooms] = useState([]);
   const [error, setError] = useState('');
   const [cameraX, setCameraX] = useState(0);
+  const [levelWon, setLevelWon] = useState(false);
 
   const canvasRef = useRef(null);
   const keysPressed = useRef({});
@@ -44,6 +45,7 @@ const BeatEmUpGame = () => {
       setRoomId(id);
       setPlayerId(pid);
       setGameState(gs);
+      setLevelWon(false);
       setScreen('game');
     });
 
@@ -51,6 +53,7 @@ const BeatEmUpGame = () => {
       setRoomId(id);
       setPlayerId(pid);
       setGameState(gs);
+      setLevelWon(false);
       setScreen('game');
     });
 
@@ -92,6 +95,7 @@ const BeatEmUpGame = () => {
 
     newSocket.on('levelComplete', ({ message }) => {
       console.log(message);
+      setLevelWon(true);
     });
 
     newSocket.on('error', ({ message }) => {
@@ -593,8 +597,69 @@ const BeatEmUpGame = () => {
               }}
             />
 
+            {/* Victory Screen */}
+            {levelWon && (
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                background: 'rgba(0, 0, 0, 0.85)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                zIndex: 100
+              }}>
+                <div style={{
+                  textAlign: 'center',
+                  fontFamily: '"Press Start 2P", monospace',
+                  color: '#00ff00'
+                }}>
+                  <h1 style={{ fontSize: '40px', marginBottom: '30px', textShadow: '0 0 20px #00ff00' }}>
+                    VICTORY!
+                  </h1>
+                  <p style={{ fontSize: '18px', marginBottom: '20px', color: '#ffff00' }}>
+                    You defeated the
+                  </p>
+                  <p style={{ fontSize: '18px', marginBottom: '40px', color: '#ff3366' }}>
+                    Critical Priority 1 Outage!
+                  </p>
+                  <button
+                    onClick={() => {
+                      setLevelWon(false);
+                      setScreen('menu');
+                    }}
+                    style={{
+                      padding: '20px 40px',
+                      fontSize: '16px',
+                      fontFamily: '"Press Start 2P", monospace',
+                      background: '#00ffff',
+                      color: '#000000',
+                      border: 'none',
+                      borderRadius: '5px',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s',
+                      boxShadow: '0 0 20px rgba(0, 255, 255, 0.5)'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.background = '#33ffff';
+                      e.target.style.boxShadow = '0 0 40px rgba(0, 255, 255, 0.8)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.background = '#00ffff';
+                      e.target.style.boxShadow = '0 0 20px rgba(0, 255, 255, 0.5)';
+                    }}
+                  >
+                    BACK TO MENU
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Game Over Screen */}
-            {gameState?.playerDead && (
+            {gameState?.playerDead && !levelWon && (
               <div style={{
                 position: 'absolute',
                 top: 0,
