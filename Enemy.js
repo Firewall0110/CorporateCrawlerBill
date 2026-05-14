@@ -36,7 +36,8 @@ class Enemy extends Unit {
   }
 
   /**
-   * Simple AI: Chase nearest player and attack
+   * 2D Chase AI: Track player on both X and Y axes (depth plane)
+   * Like classic beat 'em ups - enemies follow you across the play area
    */
   updateAI(players, deltaTime) {
     if (this.isKnockedOut || players.length === 0) {
@@ -44,12 +45,16 @@ class Enemy extends Unit {
       return;
     }
 
-    // Find nearest player
+    // Find nearest player (2D distance, but X-weighted for forward-facing AI)
     let nearestPlayer = null;
     let minDistance = this.detectionRange;
 
     players.forEach(player => {
-      const distance = Math.abs(player.x - this.x);
+      if (player.isKnockedOut) return;
+      // Weighted 2D distance: X counts more than Y so enemies engage on X axis first
+      const dx = player.x - this.x;
+      const dy = player.y - this.y;
+      const distance = Math.sqrt(dx * dx + dy * dy * 0.5);
       if (distance < minDistance) {
         minDistance = distance;
         nearestPlayer = player;
@@ -59,24 +64,34 @@ class Enemy extends Unit {
     this.target = nearestPlayer;
 
     if (!this.target) {
-      // No player in range, patrol
       this.aiState = 'patrolling';
       this.patrol();
       return;
     }
 
-    // Chase target
-    const distance = Math.abs(this.target.x - this.x);
+    // 2D chase: track player on both X (horizontal) and Y (depth plane)
+    const xDistance = Math.abs(this.target.x - this.x);
+    const yDistance = Math.abs(this.target.y - this.y);
 
-    if (distance < this.stoppingDistance) {
+    // Move along Y axis (depth) toward player - simple "tracking" behavior
+    const yAlignThreshold = 30; // Stop matching Y when this close
+    if (yDistance > yAlignThreshold) {
+      const yDir = this.target.y > this.y ? 1 : -1;
+      const ySpeed = this.speed * this.effectiveStats.movementSpeed * 0.5; // Slower Y movement
+      this.groundY = (this.groundY || this.y) + yDir * ySpeed;
+      this.y = this.groundY; // Follow on ground plane (no jumping for enemies)
+    }
+
+    // Check attack range (both X and Y must be close)
+    if (xDistance < this.stoppingDistance && yDistance < 50) {
       // Attack!
       this.aiState = 'attacking';
-      this.velocityX = 0; // Stop moving while attacking
+      this.velocityX = 0;
       if (!this.isAttacking && this.attackCooldown <= 0) {
         this.performAttack('punch');
       }
     } else {
-      // Chase
+      // Chase on X axis
       this.aiState = 'moving';
       const direction = this.target.x > this.x ? 1 : -1;
       this.velocityX = direction * this.speed * this.effectiveStats.movementSpeed;

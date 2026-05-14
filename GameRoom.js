@@ -29,7 +29,8 @@ class GameRoom {
     this.worldWidth = 3200; // Allows full progression through all zones + boss arena
     this.worldHeight = 800; // Doubled height for vertical movement
     this.gravity = 0.8;
-    this.groundLevel = 600; // Adjusted for taller world
+    this.groundLevel = 600; // Front of play area (closest to viewer)
+    this.playAreaTop = 380; // Back of play area (depth) - units can walk here
 
     // Game loop
     this.tickRate = 1000 / 60; // 60 FPS
@@ -247,7 +248,7 @@ class GameRoom {
 
     // Update all players
     this.players.forEach(player => {
-      player.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth);
+      player.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth, this.playAreaTop);
 
       // Enforce section boundary - can't move right until section is clear
       if (!this.sectionWavesClear && player.x > this.maxRightBound) {
@@ -259,13 +260,13 @@ class GameRoom {
     // Update all enemies
     this.enemies.forEach(enemy => {
       enemy.updateAI(Array.from(this.players.values()), deltaTime);
-      enemy.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth);
+      enemy.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth, this.playAreaTop);
     });
 
     // Update boss if exists
     if (this.boss) {
       this.boss.updateAI(Array.from(this.players.values()), deltaTime);
-      this.boss.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth);
+      this.boss.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth, this.playAreaTop);
     }
 
     // Spawn waves
@@ -377,6 +378,9 @@ class GameRoom {
 
     debugLog(`[Spawn] ${waveConfig.count}x ${waveConfig.enemyType}`);
 
+    // Calculate depth range for varied Y spawning
+    const depthRange = this.groundLevel - this.playAreaTop;
+
     for (let i = 0; i < waveConfig.count; i++) {
       // Use counter + random for guaranteed uniqueness
       const enemyId = `${this.id}-e${this.enemiesSpawned}-${Math.random().toString(36).substring(2, 8)}`;
@@ -384,11 +388,15 @@ class GameRoom {
       const baseStats = this.getEnemyBaseStats(waveConfig.enemyType);
       const spawnX = baseSpawnX + i * 60; // Spread enemies out
 
+      // Vary Y position across the play area depth for visual variety
+      const yOffset = (i / Math.max(1, waveConfig.count - 1)) * depthRange * 0.7;
+      const spawnY = this.playAreaTop + depthRange * 0.15 + yOffset;
+
       const enemy = new Enemy(
         enemyId,
         waveConfig.enemyType,
         baseStats,
-        { x: spawnX, y: this.groundLevel }
+        { x: spawnX, y: spawnY }
       );
 
       // Apply current modifiers to enemy
@@ -644,9 +652,12 @@ class GameRoom {
       [attribute]
     );
 
-    // Set initial position spread
+    // Set initial position spread - mid play-area depth so they're visible
     player.x = 100 + this.players.size * 80;
-    player.y = this.groundLevel;
+    // Spawn slightly forward of mid-depth so visible
+    const midDepth = (this.playAreaTop + this.groundLevel) / 2 + 40;
+    player.y = midDepth;
+    player.groundY = midDepth;
 
     this.players.set(socketId, player);
 
@@ -747,7 +758,7 @@ class GameRoom {
   handlePlayerInput(socketId, input) {
     const player = this.players.get(socketId);
     if (player) {
-      player.handleInput(input, this.groundLevel);
+      player.handleInput(input, this.groundLevel, this.playAreaTop);
     }
   }
 
@@ -771,7 +782,10 @@ class GameRoom {
       player.health = player.maxHealth;
       player.isKnockedOut = false;
       player.x = 100; // Reset to start position
-      player.y = this.groundLevel;
+      // Respawn at mid play-area depth
+      const midDepth = (this.playAreaTop + this.groundLevel) / 2 + 40;
+      player.y = midDepth;
+      player.groundY = midDepth;
       player.velocityX = 0;
       player.velocityY = 0;
 
@@ -784,6 +798,23 @@ class GameRoom {
         playerId: socketId
       });
     }
+  }
+
+  /**
+   * Calculate total enemies across all non-boss sections (used for HUD kill target)
+   */
+  getTotalEnemyCount() {
+    let total = 0;
+    this.zoneConfig.forEach(zone => {
+      if (!zone.sections) return;
+      zone.sections.forEach(section => {
+        if (section.isBoss) return;
+        (section.waves || []).forEach(wave => {
+          total += wave.count || 0;
+        });
+      });
+    });
+    return total;
   }
 
   /**
@@ -803,6 +834,9 @@ class GameRoom {
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
       groundLevel: this.groundLevel,
+      playAreaTop: this.playAreaTop, // Back of play area (depth)
+      playAreaBottom: this.groundLevel, // Front of play area
+      totalEnemyTarget: this.getTotalEnemyCount(), // For HUD progress display
       currentZone: zone,
       currentZoneIndex: this.currentZoneIndex,
       currentSection: currentSection,

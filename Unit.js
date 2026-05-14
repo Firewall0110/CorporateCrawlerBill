@@ -23,8 +23,12 @@ class Unit {
     this.effectiveStats = { ...this.baseStats };
 
     // Position and physics
+    // x: horizontal position in world
+    // y: visual Y position (where unit is rendered, includes jump offset)
+    // groundY: the "floor" Y position (depth plane), tracked separately for jumps
     this.x = position.x;
     this.y = position.y;
+    this.groundY = position.y; // Current depth position on the play plane
     this.width = 40;
     this.height = 60;
     this.velocityX = 0;
@@ -150,6 +154,7 @@ class Unit {
       name: this.name,
       x: this.x,
       y: this.y,
+      groundY: this.groundY, // For correct shadow rendering during jumps
       width: this.width,
       height: this.height,
       health: this.health,
@@ -177,25 +182,33 @@ class Unit {
   /**
    * Update unit (position, velocity, cooldowns, etc.)
    * Called every frame in game loop
+   *
+   * groundLevel: front of play area (bottom of depth plane)
+   * playAreaTop: back of play area (top of depth plane, where units appear "farther")
    */
-  update(deltaTime, gravity = 0.8, groundLevel = 350, worldWidth = 2000) {
-    // Apply velocity
+  update(deltaTime, gravity = 0.8, groundLevel = 600, worldWidth = 2000, playAreaTop = 380) {
+    // Apply horizontal velocity
     this.x += this.velocityX * this.effectiveStats.movementSpeed;
+
+    // Clamp groundY to play area (depth bounds)
+    this.groundY = Math.max(playAreaTop, Math.min(this.groundY, groundLevel));
+
+    // Apply vertical velocity (jumping)
     this.y += this.velocityY;
 
-    // Apply gravity if in air
-    if (this.y < groundLevel) {
+    // Apply gravity when above the unit's current groundY (i.e., in the air)
+    if (this.y < this.groundY) {
       this.velocityY += gravity;
     }
 
-    // Ground collision
-    if (this.y >= groundLevel) {
-      this.y = groundLevel;
+    // Land on the unit's current groundY (not the absolute ground)
+    if (this.y >= this.groundY) {
+      this.y = this.groundY;
       this.velocityY = 0;
       this.isJumping = false;
     }
 
-    // World boundaries
+    // World boundaries (horizontal)
     this.x = Math.max(0, Math.min(this.x, worldWidth - this.width));
 
     // Update attack cooldown
@@ -261,16 +274,17 @@ class Unit {
   }
 
   /**
-   * Handle movement input - includes up/down for 4-direction movement
+   * Handle movement input - 4-direction movement on depth plane + jumping
+   * Up/Down moves the unit's groundY (depth position), not absolute Y
+   * Jump applies relative to the unit's current groundY
    */
-  handleInput(input, groundLevel = 350) {
+  handleInput(input, groundLevel = 600, playAreaTop = 380) {
     if (this.isKnockedOut) return;
 
     const speed = 4 * this.effectiveStats.movementSpeed;
 
-    // Reset velocities
+    // Reset horizontal velocity
     this.velocityX = 0;
-    let verticalVelocity = 0;
 
     // Horizontal movement
     if (input.left) {
@@ -282,20 +296,21 @@ class Unit {
       this.direction = 1;
     }
 
-    // Vertical movement (up/down) - direct Y axis movement, not affected by gravity
-    if (input.up) {
-      verticalVelocity = -speed;
-    }
-    if (input.down) {
-      verticalVelocity = speed;
+    // Vertical depth movement (up/down) - only when not jumping
+    // Moves groundY directly along the depth plane
+    if (!this.isJumping) {
+      if (input.up) {
+        this.groundY = Math.max(playAreaTop, this.groundY - speed);
+        this.y = this.groundY;
+      }
+      if (input.down) {
+        this.groundY = Math.min(groundLevel, this.groundY + speed);
+        this.y = this.groundY;
+      }
     }
 
-    // Apply vertical movement if present, otherwise use gravity
-    if (verticalVelocity !== 0) {
-      this.y += verticalVelocity;
-      this.isJumping = false;
-    } else if (input.jump && !this.isJumping && this.y >= groundLevel) {
-      // Jump (only when on ground and not moving vertically)
+    // Jump (relative to current groundY)
+    if (input.jump && !this.isJumping && this.y >= this.groundY - 1) {
       this.velocityY = -15;
       this.isJumping = true;
     }

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import { getTileset } from './Tileset';
 
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
@@ -286,13 +287,8 @@ const BeatEmUpGame = () => {
         gameState.worldHeight
       );
 
-      // Draw ground line (cyan accent)
-      ctx.strokeStyle = '#00ffff';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(0, gameState.groundLevel);
-      ctx.lineTo(canvas.width, gameState.groundLevel);
-      ctx.stroke();
+      // Play area depth boundaries are rendered through the tiled ground
+      // No need for explicit line — the back wall transitions to floor naturally
 
       // Build sorted render list (sort by Y so deeper units render behind)
       const allUnits = [];
@@ -828,8 +824,8 @@ const BeatEmUpGame = () => {
             fontSize: '9px',
             flexWrap: 'wrap'
           }}>
-            <span>A/D: LEFT/RIGHT</span>
-            <span>W/S: UP/DOWN</span>
+            <span>A/D: MOVE</span>
+            <span>W/S: DEPTH</span>
             <span>SPACE: JUMP</span>
             <span>J: PUNCH</span>
             <span>K: KICK</span>
@@ -866,14 +862,17 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   const hitFlash = unit.lastHitTime && (now - unit.lastHitTime) < 150;
   const flashAlpha = hitFlash ? 1 - ((now - unit.lastHitTime) / 150) : 0;
 
-  // Y-axis depth: smaller shadow when higher up
-  const heightFromGround = Math.max(0, groundLevel - screenY);
-  const shadowScale = Math.max(0.5, 1 - heightFromGround / 200);
+  // Shadow follows unit's ground (depth) position, scales smaller when in air
+  // groundY = where the unit's feet are on the depth plane (not absolute ground)
+  // y < groundY when jumping; difference = jump height
+  const unitGroundY = unit.groundY !== undefined ? unit.groundY : groundLevel;
+  const jumpHeight = Math.max(0, unitGroundY - screenY);
+  const shadowScale = Math.max(0.5, 1 - jumpHeight / 200);
 
-  // Drop shadow (scales with height for depth)
-  ctx.fillStyle = `rgba(0, 0, 0, ${0.4 * shadowScale})`;
+  // Drop shadow at the unit's current ground position (depth)
+  ctx.fillStyle = `rgba(0, 0, 0, ${0.5 * shadowScale})`;
   ctx.beginPath();
-  ctx.ellipse(cx, groundLevel + 5, (w / 2) * shadowScale, 6 * shadowScale, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, unitGroundY + h - 2, (w / 2) * shadowScale, 5 * shadowScale, 0, 0, Math.PI * 2);
   ctx.fill();
 
   // Skip drawing body if knocked out (fall over animation)
@@ -1292,213 +1291,238 @@ function drawBoss(ctx, boss, cameraX, groundLevel, now) {
 }
 
 /**
- * Draw parallax scrolling 16-bit campus background
+ * Draw parallax scrolling 16-bit SNES-style corporate campus background
+ * Uses pre-rendered tiles for performance and authentic pixel-art feel
  */
 function drawParallaxBackground(ctx, zoneIndex, cameraX, worldWidth, worldHeight) {
-  // Sky gradient
-  const gradient = ctx.createLinearGradient(0, 0, 0, worldHeight);
-  gradient.addColorStop(0, '#1a3a5c'); // Dark blue top
-  gradient.addColorStop(0.5, '#3a6a9c'); // Medium blue
-  gradient.addColorStop(1, '#5a9acc'); // Light blue bottom
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, worldWidth, worldHeight);
+  const tiles = getTileset();
+  const canvasW = ctx.canvas.width;
+  const canvasH = ctx.canvas.height;
 
-  // Get zone-specific colors
-  const zoneColors = {
-    0: { sky: '#1a3a5c', building: '#4a6a8a', accent: '#ff9900' }, // Parking Lot
-    1: { sky: '#2a4a6c', building: '#3a7a4a', accent: '#33ff66' }, // Quad
-    2: { sky: '#3a3a6c', building: '#5a5a8a', accent: '#3366ff' }, // Lobby
-    3: { sky: '#1a1a3c', building: '#4a3a6a', accent: '#ff3366' }  // Elevators
+  // Zone-specific sky colors
+  const skyColors = {
+    0: ['#3a5a8a', '#7aaccc', '#ccddee'], // Parking Lot - daytime blue
+    1: ['#5a8acc', '#a0c4e0', '#d0e4f0'], // Quad - bright clear sky
+    2: ['#4a4a6a', '#8a8aaa', '#ccccd8'], // Lobby - cool indoor
+    3: ['#0a0a2a', '#1a1a3a', '#2a2a4a']  // Elevators - dark server room
   };
-  const colors = zoneColors[zoneIndex] || zoneColors[0];
+  const sky = skyColors[zoneIndex] || skyColors[0];
 
-  // Layer 1: Distant mountains/sky (slowest - 0.2x)
-  drawDistantMountains(ctx, cameraX * 0.2, worldWidth, worldHeight, colors);
+  // === Sky gradient (covers everything above ground level) ===
+  const gradient = ctx.createLinearGradient(0, 0, 0, 380);
+  gradient.addColorStop(0, sky[0]);
+  gradient.addColorStop(0.6, sky[1]);
+  gradient.addColorStop(1, sky[2]);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvasW, 380);
 
-  // Layer 2: Background buildings (0.4x parallax)
-  drawBackgroundBuildings(ctx, cameraX * 0.4, worldWidth, worldHeight, colors);
+  // === Layer 1: Distant clouds (0.15x parallax) ===
+  if (zoneIndex !== 3) { // No clouds in elevator/server room
+    drawClouds(ctx, tiles, cameraX * 0.15, canvasW);
+  }
 
-  // Layer 3: Mid-ground structures (0.6x parallax)
-  drawMidgroundElements(ctx, cameraX * 0.6, worldWidth, worldHeight, zoneIndex, colors);
+  // === Layer 2: Skyline buildings (0.35x parallax) ===
+  drawSkyline(ctx, tiles, cameraX * 0.35, canvasW, zoneIndex);
 
-  // Layer 4: Trees and decorations (0.8x parallax)
-  drawForegroundTrees(ctx, cameraX * 0.8, worldWidth, worldHeight, colors);
+  // === Layer 3: Mid-ground buildings (0.55x parallax) ===
+  drawMidgroundBuildings(ctx, tiles, cameraX * 0.55, canvasW, zoneIndex);
 
-  // Layer 5: Ground details (1.0x - moves with camera)
-  drawGroundDetails(ctx, cameraX, worldWidth, worldHeight, zoneIndex);
+  // === Layer 4: Tiled ground (0.95x - near full parallax) ===
+  drawTiledGround(ctx, tiles, cameraX * 0.95, canvasW, canvasH, zoneIndex);
+
+  // === Layer 5: Foreground props (0.85x parallax) ===
+  drawForegroundProps(ctx, tiles, cameraX * 0.85, canvasW, zoneIndex);
 }
 
 /**
- * Draw distant mountains/clouds
+ * Draw scrolling clouds in the sky
  */
-function drawDistantMountains(ctx, scrollX, worldWidth, worldHeight, colors) {
-  ctx.fillStyle = 'rgba(100, 140, 180, 0.3)';
-
-  // Draw clouds
-  for (let i = -1; i < worldWidth / 200; i++) {
-    const x = (i * 200 - scrollX) % (worldWidth + 400);
-    // Cloud shape made of rectangles
-    ctx.fillRect(x, 50, 80, 30);
-    ctx.fillRect(x + 30, 30, 80, 30);
-    ctx.fillRect(x + 60, 50, 80, 30);
+function drawClouds(ctx, tiles, scrollX, canvasW) {
+  if (!tiles.cloud) return;
+  const cloudSpacing = 250;
+  const numClouds = Math.ceil(canvasW / cloudSpacing) + 2;
+  for (let i = -1; i < numClouds; i++) {
+    const xRaw = i * cloudSpacing - scrollX;
+    const x = ((xRaw % (canvasW + 400)) + canvasW + 400) % (canvasW + 400) - 200;
+    const y = 30 + (i * 17) % 50;
+    ctx.drawImage(tiles.cloud, Math.floor(x), Math.floor(y));
   }
 }
 
 /**
- * Draw background tall buildings
+ * Draw skyline buildings (background)
  */
-function drawBackgroundBuildings(ctx, scrollX, worldWidth, worldHeight, colors) {
-  ctx.fillStyle = colors.building;
-
-  // Distant office building towers
-  for (let i = -1; i < worldWidth / 300; i++) {
-    const x = (i * 300 - scrollX) % (worldWidth + 400);
-
-    // Main building
-    ctx.fillRect(x, 150, 80, 300);
-
-    // Windows
-    ctx.fillStyle = '#ffff99';
-    for (let row = 0; row < 15; row++) {
-      for (let col = 0; col < 3; col++) {
-        ctx.fillRect(x + 10 + col * 20, 160 + row * 20, 12, 12);
-      }
-    }
-
-    // Roof
-    ctx.fillStyle = '#333333';
-    ctx.fillRect(x, 140, 80, 10);
-
-    // Return to building color
-    ctx.fillStyle = colors.building;
+function drawSkyline(ctx, tiles, scrollX, canvasW, zoneIndex) {
+  const spacing = 120;
+  const numBuildings = Math.ceil(canvasW / spacing) + 2;
+  for (let i = -1; i < numBuildings; i++) {
+    const xRaw = i * spacing - scrollX;
+    const x = ((xRaw % (canvasW + 300)) + canvasW + 300) % (canvasW + 300) - 150;
+    // Alternate between tall and short buildings
+    const isTall = (i * 7) % 5 < 2;
+    const bldg = isTall ? tiles.officeBuildingTall : tiles.officeBuilding;
+    if (!bldg) continue;
+    const y = isTall ? 130 : 180;
+    ctx.drawImage(bldg, Math.floor(x), y);
   }
 }
 
 /**
- * Draw mid-ground elements (buildings, server racks)
+ * Draw mid-ground buildings (closer)
  */
-function drawMidgroundElements(ctx, scrollX, worldWidth, worldHeight, zoneIndex, colors) {
-  if (zoneIndex === 0) {
-    // Parking Lot - cars and parking structures
-    ctx.fillStyle = '#cc4444';
-    for (let i = -1; i < worldWidth / 250; i++) {
-      const x = (i * 250 - scrollX) % (worldWidth + 400);
-      // Parked car
-      ctx.fillRect(x, 450, 60, 40);
-      ctx.fillRect(x + 15, 430, 20, 20); // Window
-    }
-  } else if (zoneIndex === 1) {
-    // Quad - benches and pavilion
-    ctx.fillStyle = '#8B4513';
-    for (let i = -1; i < worldWidth / 300; i++) {
-      const x = (i * 300 - scrollX) % (worldWidth + 400);
-      ctx.fillRect(x, 520, 80, 20); // Bench
-      ctx.fillRect(x + 35, 480, 10, 40); // Bench support
-    }
-  } else if (zoneIndex === 2) {
-    // Lobby - entrance structure
-    ctx.fillStyle = '#5a5a7a';
-    for (let i = -1; i < worldWidth / 350; i++) {
-      const x = (i * 350 - scrollX) % (worldWidth + 400);
-      ctx.fillRect(x, 400, 100, 200); // Lobby building
-      ctx.fillRect(x + 20, 420, 30, 40); // Door
-      ctx.fillRect(x + 60, 420, 30, 40); // Door
-    }
-  } else if (zoneIndex === 3) {
-    // Elevators - server racks and tech
-    ctx.fillStyle = '#3a3a5a';
-    for (let i = -1; i < worldWidth / 200; i++) {
-      const x = (i * 200 - scrollX) % (worldWidth + 400);
-      // Server rack
-      ctx.fillRect(x, 480, 40, 120);
-      ctx.fillStyle = '#ff0000';
-      for (let j = 0; j < 6; j++) {
-        ctx.fillRect(x + 5, 490 + j * 18, 30, 8);
-      }
-      ctx.fillStyle = '#3a3a5a';
-    }
+function drawMidgroundBuildings(ctx, tiles, scrollX, canvasW, zoneIndex) {
+  const spacing = 180;
+  const numBuildings = Math.ceil(canvasW / spacing) + 2;
+  for (let i = -1; i < numBuildings; i++) {
+    const xRaw = i * spacing - scrollX;
+    const x = ((xRaw % (canvasW + 400)) + canvasW + 400) % (canvasW + 400) - 200;
+    // Every 3rd building is a different style
+    const useShort = (i * 5) % 3 === 0;
+    const bldg = useShort ? tiles.buildingShort : tiles.officeBuilding;
+    if (!bldg) continue;
+    const y = useShort ? 230 : 200;
+    ctx.drawImage(bldg, Math.floor(x), y);
   }
 }
 
 /**
- * Draw foreground trees and obstacles
+ * Draw tiled ground (back wall + floor)
+ * Ground is the main play surface - tiled with zone-specific tiles
  */
-function drawForegroundTrees(ctx, scrollX, worldWidth, worldHeight, colors) {
-  ctx.fillStyle = '#2a5a2a';
+function drawTiledGround(ctx, tiles, scrollX, canvasW, canvasH, zoneIndex) {
+  // Back wall (above play area)
+  const backWallY = 380;
+  const playFloorY = 380; // Start of play floor
+  const groundEndY = 700;
 
-  // Trees
-  for (let i = -1; i < worldWidth / 200; i++) {
-    const x = (i * 200 - scrollX) % (worldWidth + 400);
+  // Zone-specific ground tile
+  let primaryTile = tiles.asphalt;
+  let accentTile = tiles.asphaltStripe;
+  let wallColor = '#2a2a30';
 
-    // Trunk
-    ctx.fillStyle = '#8B4513';
-    ctx.fillRect(x + 15, 480, 20, 60);
-
-    // Foliage - blocky tree shape
-    ctx.fillStyle = '#2a7a2a';
-    ctx.fillRect(x, 420, 50, 50); // Bottom
-    ctx.fillRect(x + 5, 380, 40, 40); // Middle
-    ctx.fillRect(x + 10, 350, 30, 30); // Top
+  switch (zoneIndex) {
+    case 0: // Parking Lot
+      primaryTile = tiles.asphalt;
+      accentTile = tiles.asphaltStripe;
+      wallColor = '#3a3a44';
+      break;
+    case 1: // Quad
+      primaryTile = tiles.grass;
+      accentTile = tiles.grassFlower;
+      wallColor = '#2a6a3a';
+      break;
+    case 2: // Lobby
+      primaryTile = tiles.marble;
+      accentTile = tiles.marbleAccent;
+      wallColor = '#7a7a8a';
+      break;
+    case 3: // Elevators
+      primaryTile = tiles.metalGrate;
+      accentTile = tiles.metalGrate;
+      wallColor = '#1a1a2a';
+      break;
+    default:
+      break;
   }
-}
 
-/**
- * Draw ground-level details
- */
-function drawGroundDetails(ctx, cameraX, worldWidth, worldHeight, zoneIndex) {
-  if (zoneIndex === 0) {
-    // Parking Lot - road markings
-    ctx.strokeStyle = '#ffff00';
-    ctx.lineWidth = 4;
-    for (let i = -1; i < worldWidth / 100; i++) {
-      const x = i * 100 - (cameraX % 100);
-      ctx.beginPath();
-      ctx.moveTo(x, worldHeight - 50);
-      ctx.lineTo(x + 40, worldHeight - 50);
-      ctx.stroke();
-    }
-  } else if (zoneIndex === 1) {
-    // Quad - grass pattern
-    ctx.fillStyle = 'rgba(100, 180, 100, 0.3)';
-    for (let i = 0; i < 20; i++) {
-      for (let j = 0; j < 10; j++) {
-        const x = (i * 100 - (cameraX % 100)) % worldWidth;
-        const y = 550 + j * 30;
-        if (Math.random() > 0.7) {
-          ctx.fillRect(x, y, 20, 20);
+  // Back wall gradient
+  const wallGrad = ctx.createLinearGradient(0, 280, 0, playFloorY);
+  wallGrad.addColorStop(0, wallColor);
+  wallGrad.addColorStop(1, lightenHex(wallColor, 0.2));
+  ctx.fillStyle = wallGrad;
+  ctx.fillRect(0, 320, canvasW, 60);
+
+  // Floor: tiled with primary tile, occasionally accent
+  if (primaryTile) {
+    const tw = primaryTile.width; // 32
+    const th = primaryTile.height; // 32
+    const startX = -((scrollX % tw) + tw) % tw;
+    let tileX = 0;
+    for (let x = startX; x < canvasW; x += tw) {
+      for (let y = playFloorY; y < groundEndY; y += th) {
+        // Decide which tile to use (stripe accent every 5th tile row in parking lot)
+        let useAccent = false;
+        if (zoneIndex === 0) {
+          // Parking lot: stripe accent every 4th tile column
+          useAccent = (Math.floor((x + scrollX) / tw) % 4 === 0) && y === playFloorY + th * 2;
+        } else if (zoneIndex === 1) {
+          // Quad: flower every 6th tile
+          useAccent = (Math.floor((x + scrollX) / tw) % 7 === 0) && (Math.floor(y / th) % 3 === 0);
+        } else if (zoneIndex === 2) {
+          // Lobby: accent in checker
+          useAccent = ((Math.floor((x + scrollX) / tw) + Math.floor(y / th)) % 4 === 0);
         }
+        const tileToUse = useAccent && accentTile ? accentTile : primaryTile;
+        ctx.drawImage(tileToUse, Math.floor(x), Math.floor(y));
       }
+      tileX++;
     }
-  } else if (zoneIndex === 2) {
-    // Lobby - tile pattern
-    ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
-    ctx.lineWidth = 2;
-    for (let i = -1; i < worldWidth / 50; i++) {
-      const x = i * 50 - (cameraX % 50);
-      ctx.beginPath();
-      ctx.moveTo(x, 580);
-      ctx.lineTo(x, 620);
-      ctx.stroke();
-    }
-  } else if (zoneIndex === 3) {
-    // Elevators - metal floor grating
-    ctx.strokeStyle = 'rgba(150, 150, 150, 0.5)';
-    ctx.lineWidth = 1;
-    for (let i = -1; i < worldWidth / 30; i++) {
-      const x = i * 30 - (cameraX % 30);
-      for (let j = 580; j < 620; j += 15) {
-        ctx.beginPath();
-        ctx.moveTo(x, j);
-        ctx.lineTo(x + 15, j);
-        ctx.stroke();
+  }
+
+  // Floor edge highlight (front of play area)
+  ctx.fillStyle = '#ffffff';
+  ctx.globalAlpha = 0.15;
+  ctx.fillRect(0, playFloorY, canvasW, 1);
+  ctx.globalAlpha = 1;
+}
+
+/**
+ * Draw foreground props (cars, benches, server racks, etc.)
+ */
+function drawForegroundProps(ctx, tiles, scrollX, canvasW, zoneIndex) {
+  const spacing = 220;
+  const numProps = Math.ceil(canvasW / spacing) + 2;
+
+  for (let i = -1; i < numProps; i++) {
+    const xRaw = i * spacing - scrollX;
+    const x = ((xRaw % (canvasW + 500)) + canvasW + 500) % (canvasW + 500) - 250;
+
+    let prop = null;
+    let y = 320; // Default y position
+
+    if (zoneIndex === 0) {
+      // Parking Lot - cars and streetlights
+      const choices = [tiles.carRed, tiles.carBlue, tiles.carYellow, tiles.carWhite, tiles.streetlight];
+      prop = choices[Math.abs(Math.floor(i * 3)) % choices.length];
+      y = prop === tiles.streetlight ? 260 : 340;
+    } else if (zoneIndex === 1) {
+      // Quad - benches, trees, hedges
+      const choices = [tiles.bench, tiles.tree, tiles.hedge];
+      prop = choices[Math.abs(Math.floor(i * 5)) % choices.length];
+      if (prop === tiles.tree) y = 280;
+      else if (prop === tiles.bench) y = 330;
+      else y = 340;
+    } else if (zoneIndex === 2) {
+      // Lobby - reception desks (sparse)
+      if (i % 3 === 0) {
+        prop = tiles.receptionDesk;
+        y = 300;
       }
+    } else if (zoneIndex === 3) {
+      // Elevators - server racks and elevator doors
+      const choices = [tiles.serverRack, tiles.elevatorDoor];
+      prop = choices[Math.abs(Math.floor(i * 7)) % choices.length];
+      y = prop === tiles.elevatorDoor ? 240 : 270;
+    }
+
+    if (prop) {
+      ctx.drawImage(prop, Math.floor(x), y);
     }
   }
 }
 
 /**
- * Draw zone-specific background (OLD - kept for compatibility)
+ * Helper: lighten a hex color (for gradient stops)
  */
+function lightenHex(hex, amount) {
+  const c = hex.replace('#', '');
+  const r = Math.min(255, parseInt(c.substring(0, 2), 16) + Math.floor(255 * amount));
+  const g = Math.min(255, parseInt(c.substring(2, 4), 16) + Math.floor(255 * amount));
+  const b = Math.min(255, parseInt(c.substring(4, 6), 16) + Math.floor(255 * amount));
+  return `rgb(${r},${g},${b})`;
+}
+
+
 /**
  * Draw HUD overlay
  */
@@ -1523,24 +1547,32 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
     });
   }
 
-  // Kill counter (top right - PROMINENT) - Show progress to boss (30 kills)
+  // Kill counter (top right - PROMINENT) - Show progress to boss
   if (gameState.debug) {
-    const targetKills = 30; // Total enemies before boss
+    const targetKills = gameState.totalEnemyTarget || 18; // From server config
     const killsRemaining = Math.max(0, targetKills - gameState.debug.totalKills);
-    ctx.fillStyle = killsRemaining === 0 ? '#00ff00' : '#ff3333';
+    const bossActive = !!gameState.boss;
+    ctx.fillStyle = bossActive ? '#ff00ff' : (killsRemaining === 0 ? '#00ff00' : '#ff3333');
     ctx.font = 'bold 16px "Press Start 2P", monospace';
     ctx.textAlign = 'right';
-    ctx.fillText(`KILLS: ${gameState.debug.totalKills}/${targetKills}`, canvasWidth - 10, 30);
 
-    // Show progress text if not all enemies defeated
-    if (killsRemaining > 0) {
-      ctx.fillStyle = '#ffff00';
-      ctx.font = 'bold 10px "Press Start 2P", monospace';
-      ctx.fillText(`${killsRemaining} to boss`, canvasWidth - 10, 45);
+    if (bossActive) {
+      ctx.fillText(`BOSS FIGHT!`, canvasWidth - 10, 30);
     } else {
-      ctx.fillStyle = '#00ff00';
-      ctx.font = 'bold 10px "Press Start 2P", monospace';
-      ctx.fillText(`BOSS UNLOCKED!`, canvasWidth - 10, 45);
+      ctx.fillText(`KILLS: ${gameState.debug.totalKills}/${targetKills}`, canvasWidth - 10, 30);
+    }
+
+    // Show progress text
+    if (!bossActive) {
+      if (killsRemaining > 0) {
+        ctx.fillStyle = '#ffff00';
+        ctx.font = 'bold 10px "Press Start 2P", monospace';
+        ctx.fillText(`${killsRemaining} to boss`, canvasWidth - 10, 45);
+      } else {
+        ctx.fillStyle = '#00ff00';
+        ctx.font = 'bold 10px "Press Start 2P", monospace';
+        ctx.fillText(`BOSS UNLOCKED!`, canvasWidth - 10, 45);
+      }
     }
 
     // Section/spawn info
