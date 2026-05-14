@@ -1138,12 +1138,25 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
     });
   }
 
-  // Kill counter (top right - PROMINENT)
+  // Kill counter (top right - PROMINENT) - Show progress to boss (30 kills)
   if (gameState.debug) {
-    ctx.fillStyle = '#ff3333';
+    const targetKills = 30; // Total enemies before boss
+    const killsRemaining = Math.max(0, targetKills - gameState.debug.totalKills);
+    ctx.fillStyle = killsRemaining === 0 ? '#00ff00' : '#ff3333';
     ctx.font = 'bold 16px "Press Start 2P", monospace';
     ctx.textAlign = 'right';
-    ctx.fillText(`KILLS: ${gameState.debug.totalKills}`, canvasWidth - 10, 30);
+    ctx.fillText(`KILLS: ${gameState.debug.totalKills}/${targetKills}`, canvasWidth - 10, 30);
+
+    // Show progress text if not all enemies defeated
+    if (killsRemaining > 0) {
+      ctx.fillStyle = '#ffff00';
+      ctx.font = 'bold 10px "Press Start 2P", monospace';
+      ctx.fillText(`${killsRemaining} to boss`, canvasWidth - 10, 45);
+    } else {
+      ctx.fillStyle = '#00ff00';
+      ctx.font = 'bold 10px "Press Start 2P", monospace';
+      ctx.fillText(`BOSS UNLOCKED!`, canvasWidth - 10, 45);
+    }
 
     // Section/spawn info
     ctx.fillStyle = '#ffff00';
