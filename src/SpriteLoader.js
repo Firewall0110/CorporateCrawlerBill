@@ -113,13 +113,98 @@ function processSheet(img) {
     }
   }
 
+  // Third pass: remove isolated noise pixels (JPG color speckles in empty areas)
+  // Any opaque pixel with fewer than 3 opaque neighbors in its 3x3 area
+  // is considered noise and removed. This dramatically tightens the bbox.
+  // We work on a snapshot so we don't cascade-remove valid edge pixels.
+  const snapshot = new Uint8Array(data.length);
+  for (let i = 3; i < data.length; i += 4) {
+    snapshot[i] = data[i]; // copy alpha channel
+  }
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const idx = (y * w + x) * 4;
+      if (snapshot[idx + 3] === 0) continue;
+      let opaqueNeighbors = 0;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const nIdx = (ny * w + nx) * 4;
+          if (snapshot[nIdx + 3] > 0) opaqueNeighbors++;
+        }
+      }
+      if (opaqueNeighbors < 3) {
+        data[idx + 3] = 0; // isolated speckle -> transparent
+      }
+    }
+  }
+
   ctx.putImageData(imageData, 0, 0);
   return canvas;
 }
 
 /**
+ * Find the LARGEST connected component of opaque pixels using flood fill
+ * Returns bounding box of just that component, excluding any leftover noise.
+ */
+function findMainContentBounds(frameCtx, w, h) {
+  const imageData = frameCtx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  const componentId = new Int32Array(w * h); // 0 = unvisited
+  let nextId = 1;
+  let bestSize = 0;
+  let bestBounds = { minX: w, maxX: 0, minY: h, maxY: 0 };
+
+  for (let startY = 0; startY < h; startY++) {
+    for (let startX = 0; startX < w; startX++) {
+      const startPtr = startY * w + startX;
+      if (componentId[startPtr] !== 0) continue;
+      if (data[startPtr * 4 + 3] === 0) continue;
+
+      // BFS this component
+      const id = nextId++;
+      const stack = [startX, startY];
+      let size = 0;
+      const bounds = { minX: startX, maxX: startX, minY: startY, maxY: startY };
+
+      while (stack.length > 0) {
+        const cy = stack.pop();
+        const cx = stack.pop();
+        if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
+        const ptr = cy * w + cx;
+        if (componentId[ptr] !== 0) continue;
+        if (data[ptr * 4 + 3] === 0) continue;
+
+        componentId[ptr] = id;
+        size++;
+        if (cx < bounds.minX) bounds.minX = cx;
+        if (cx > bounds.maxX) bounds.maxX = cx;
+        if (cy < bounds.minY) bounds.minY = cy;
+        if (cy > bounds.maxY) bounds.maxY = cy;
+
+        stack.push(cx + 1, cy);
+        stack.push(cx - 1, cy);
+        stack.push(cx, cy + 1);
+        stack.push(cx, cy - 1);
+      }
+
+      if (size > bestSize) {
+        bestSize = size;
+        bestBounds = bounds;
+      }
+    }
+  }
+
+  return bestSize > 0 ? bestBounds : null;
+}
+
+/**
  * Crop tight bounding box from a frame (find content boundaries)
- * Returns { canvas, frameWidth, frameHeight }
+ * Uses LARGEST connected component to ignore stray noise pixels.
+ * Returns { canvas, width, height, anchorX, anchorY }
  */
 function cropFrame(sheet, frameIndex, totalFrames) {
   const fullFrameWidth = sheet.width / totalFrames;
@@ -135,50 +220,32 @@ function cropFrame(sheet, frameIndex, totalFrames) {
     frameIndex * fullFrameWidth, 0, fullFrameWidth, fullFrameHeight,
     0, 0, fullFrameWidth, fullFrameHeight);
 
-  // Find content bounding box (non-transparent pixels)
-  const imageData = frameCtx.getImageData(0, 0, fullFrameWidth, fullFrameHeight);
-  const data = imageData.data;
-  let minX = fullFrameWidth, maxX = 0, minY = fullFrameHeight, maxY = 0;
+  // Find bounding box of the LARGEST connected component
+  // This ensures tight cropping even if there's leftover noise in the frame
+  const bounds = findMainContentBounds(frameCtx, fullFrameWidth, fullFrameHeight);
 
-  for (let y = 0; y < fullFrameHeight; y++) {
-    for (let x = 0; x < fullFrameWidth; x++) {
-      const idx = (y * fullFrameWidth + x) * 4;
-      if (data[idx + 3] > 30) {
-        if (x < minX) minX = x;
-        if (x > maxX) maxX = x;
-        if (y < minY) minY = y;
-        if (y > maxY) maxY = y;
-      }
-    }
-  }
-
-  // If we found content, crop to bounding box
-  if (maxX > minX && maxY > minY) {
-    const cropW = maxX - minX + 1;
-    const cropH = maxY - minY + 1;
+  if (bounds) {
+    const cropW = bounds.maxX - bounds.minX + 1;
+    const cropH = bounds.maxY - bounds.minY + 1;
     const croppedCanvas = document.createElement('canvas');
     croppedCanvas.width = cropW;
     croppedCanvas.height = cropH;
     const croppedCtx = croppedCanvas.getContext('2d');
     croppedCtx.imageSmoothingEnabled = false;
-    croppedCtx.drawImage(frameCanvas, minX, minY, cropW, cropH, 0, 0, cropW, cropH);
+    croppedCtx.drawImage(frameCanvas, bounds.minX, bounds.minY, cropW, cropH, 0, 0, cropW, cropH);
     return {
       canvas: croppedCanvas,
-      offsetX: minX,
-      offsetY: minY,
       width: cropW,
       height: cropH,
-      // Store anchor (bottom-center) for proper positioning
+      // Anchor at bottom-center (feet position)
       anchorX: cropW / 2,
-      anchorY: cropH // Feet at bottom
+      anchorY: cropH
     };
   }
 
   // Fallback: return full frame
   return {
     canvas: frameCanvas,
-    offsetX: 0,
-    offsetY: 0,
     width: fullFrameWidth,
     height: fullFrameHeight,
     anchorX: fullFrameWidth / 2,

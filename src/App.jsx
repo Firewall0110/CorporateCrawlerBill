@@ -1049,12 +1049,12 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   }
 
   const sprite = frame.sprite;
-  // Bill renders ~3x the hitbox height for a proper beat 'em up scale
-  // (hitbox is small for collision; visual sprite is much larger for visibility)
-  // Idle/punch frames have similar height; kick is taller (high kick reaches up)
-  // We anchor at feet (bottom-center) so the kick's higher reach extends upward
+  // Bill renders at fixed beat-em-up scale (not relative to small hitbox)
+  // Idle/punch: 180px tall - clearly visible, ~26% of 700px canvas height
+  // Kick: 220px tall - extra room for high kick reaching above head
+  // Hitbox stays small (40x60) for snappy combat collision
   const isKickFrame = frame.type === 'kick';
-  const drawH = isKickFrame ? h * 3.6 : h * 3.0; // 216 (kick) / 180 (idle/punch)
+  const drawH = isKickFrame ? 220 : 180;
   const aspect = sprite.canvas.width / sprite.canvas.height;
   const drawW = drawH * aspect;
   const cx = screenX + w / 2;
