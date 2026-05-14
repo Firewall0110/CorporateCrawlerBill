@@ -1049,10 +1049,12 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   }
 
   const sprite = frame.sprite;
-  // Scale sprite to fit hitbox height (preserving aspect ratio)
-  // Sprite anchor is at bottom-center (feet)
-  // We want sprite feet at (cx, screenY + h)
-  const drawH = h * 1.25; // Slightly larger than hitbox for visibility
+  // Bill renders ~2.5x the hitbox height for a proper beat 'em up scale
+  // (hitbox is small for collision; visual sprite is much larger for visibility)
+  // Idle/punch frames have similar height; kick is taller (high kick reaches up)
+  // We anchor at feet (bottom-center) so the kick's higher reach extends upward
+  const isKickFrame = frame.type === 'kick';
+  const drawH = isKickFrame ? h * 3.0 : h * 2.5; // 180 (kick) / 150 (idle/punch)
   const aspect = sprite.canvas.width / sprite.canvas.height;
   const drawW = drawH * aspect;
   const cx = screenX + w / 2;
