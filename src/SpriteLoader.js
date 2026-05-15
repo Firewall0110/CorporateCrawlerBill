@@ -22,28 +22,32 @@ const SPRITE_SHEETS = {
 };
 
 /**
- * Check if a pixel is "checker-gray" (grayscale and in the brightness range
- * used by the JPG transparency-checker background)
+ * Strict check: is a pixel CLEARLY part of the gray checker background?
  *
- * Captures both the light (~200) and dark (~150) checker squares,
- * plus all the JPG-compressed boundary pixels between them.
+ * Tight thresholds to avoid removing character outline pixels that are
+ * slightly desaturated due to JPG compression at the body/background boundary.
  */
 function isCheckerGray(r, g, b) {
-  // Must be near-grayscale: R ≈ G ≈ B
+  // Must be very nearly grayscale (R ≈ G ≈ B within tight tolerance)
   const maxC = Math.max(r, g, b);
   const minC = Math.min(r, g, b);
-  if (maxC - minC > 22) return false; // Has color saturation - not gray
-  // In the checker brightness band (covers ~150 to ~210 with JPG noise)
+  if (maxC - minC > 10) return false;
+  // Brightness in the actual checker band (light ~200, dark ~150)
   const avg = (r + g + b) / 3;
-  return avg >= 125 && avg <= 225;
+  return avg >= 135 && avg <= 220;
 }
 
 /**
  * Process an image to remove checker background → transparency
  *
- * Strategy: flood fill from all 4 edges, marking connected gray pixels as
- * transparent. This preserves interior gray details (like dog tags) because
- * they aren't connected to the image edge through gray pixels.
+ * Strategy:
+ * 1. Flood fill from all 4 edges, marking connected gray pixels transparent.
+ *    Strict gray threshold to avoid eating character outline pixels.
+ * 2. Isolated-pixel noise filter (snapshot-based, no cascading) to remove
+ *    stray colored JPG speckles in transparent areas.
+ *
+ * No cleanup pass - the flood fill + noise filter combo is reliable
+ * without risking cascading erosion into the character body.
  */
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -59,17 +63,15 @@ function processSheet(img) {
   const data = imageData.data;
   const visited = new Uint8Array(w * h);
 
-  // Stack-based flood fill (DFS) - much faster than queue.shift()
+  // ---- PASS 1: Flood fill gray from edges ----
   const stack = [];
-
-  // Seed all edge pixels
   for (let x = 0; x < w; x++) {
-    stack.push(x, 0);            // top edge: y=0
-    stack.push(x, h - 1);        // bottom edge: y=h-1
+    stack.push(x, 0);
+    stack.push(x, h - 1);
   }
   for (let y = 0; y < h; y++) {
-    stack.push(0, y);            // left edge: x=0
-    stack.push(w - 1, y);        // right edge: x=w-1
+    stack.push(0, y);
+    stack.push(w - 1, y);
   }
 
   while (stack.length > 0) {
@@ -83,48 +85,25 @@ function processSheet(img) {
     const idx = ptr * 4;
     if (!isCheckerGray(data[idx], data[idx + 1], data[idx + 2])) continue;
 
-    data[idx + 3] = 0; // alpha = transparent
+    data[idx + 3] = 0;
 
-    // Spread to 4-connected neighbors
     stack.push(x + 1, y);
     stack.push(x - 1, y);
     stack.push(x, y + 1);
     stack.push(x, y - 1);
   }
 
-  // Second pass: clean up any remaining standalone gray pixels at edges
-  // (in case some boundary pixels are slightly above the grayscale threshold)
-  // This catches the JPG noise halo right at the character outline.
-  for (let i = 0; i < data.length; i += 4) {
-    if (data[i + 3] === 0) continue;
-    if (isCheckerGray(data[i], data[i + 1], data[i + 2])) {
-      // Only kill if at least one neighbor is already transparent (i.e., edge contact)
-      const ptr = i / 4;
-      const x = ptr % w;
-      const y = (ptr - x) / w;
-      const hasTransparentNeighbor =
-        (x > 0 && data[((y * w) + (x - 1)) * 4 + 3] === 0) ||
-        (x < w - 1 && data[((y * w) + (x + 1)) * 4 + 3] === 0) ||
-        (y > 0 && data[(((y - 1) * w) + x) * 4 + 3] === 0) ||
-        (y < h - 1 && data[(((y + 1) * w) + x) * 4 + 3] === 0);
-      if (hasTransparentNeighbor) {
-        data[i + 3] = 0;
-      }
-    }
-  }
-
-  // Third pass: remove isolated noise pixels (JPG color speckles in empty areas)
-  // Any opaque pixel with fewer than 3 opaque neighbors in its 3x3 area
-  // is considered noise and removed. This dramatically tightens the bbox.
-  // We work on a snapshot so we don't cascade-remove valid edge pixels.
-  const snapshot = new Uint8Array(data.length);
-  for (let i = 3; i < data.length; i += 4) {
-    snapshot[i] = data[i]; // copy alpha channel
+  // ---- PASS 2: Isolated-pixel noise filter (snapshot-based) ----
+  // Any opaque pixel with fewer than 3 opaque neighbors (3x3) is a stray
+  // speck and gets removed. Snapshot prevents cascading erosion.
+  const snapshotAlpha = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    snapshotAlpha[i] = data[i * 4 + 3];
   }
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
-      const idx = (y * w + x) * 4;
-      if (snapshot[idx + 3] === 0) continue;
+      const ptr = y * w + x;
+      if (snapshotAlpha[ptr] === 0) continue;
       let opaqueNeighbors = 0;
       for (let dy = -1; dy <= 1; dy++) {
         for (let dx = -1; dx <= 1; dx++) {
@@ -132,12 +111,11 @@ function processSheet(img) {
           const nx = x + dx;
           const ny = y + dy;
           if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-          const nIdx = (ny * w + nx) * 4;
-          if (snapshot[nIdx + 3] > 0) opaqueNeighbors++;
+          if (snapshotAlpha[ny * w + nx] > 0) opaqueNeighbors++;
         }
       }
       if (opaqueNeighbors < 3) {
-        data[idx + 3] = 0; // isolated speckle -> transparent
+        data[ptr * 4 + 3] = 0;
       }
     }
   }
