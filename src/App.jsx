@@ -6,6 +6,205 @@ import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
 
+/**
+ * MobileControls - Touch-screen D-pad + action buttons for phones/tablets
+ * Sets the same keysPressed flags that the keyboard handlers use,
+ * so the input emit loop picks them up automatically.
+ */
+const MobileControls = ({ keysPressed }) => {
+  const setKey = (key, down) => {
+    keysPressed.current[key] = down;
+  };
+
+  // Reusable touch handlers that prevent default scrolling/zoom behavior
+  const pressHandlers = (key) => ({
+    onTouchStart: (e) => { e.preventDefault(); setKey(key, true); },
+    onTouchEnd: (e) => { e.preventDefault(); setKey(key, false); },
+    onTouchCancel: (e) => { e.preventDefault(); setKey(key, false); },
+    // Also support mouse for testing
+    onMouseDown: (e) => { e.preventDefault(); setKey(key, true); },
+    onMouseUp: (e) => { e.preventDefault(); setKey(key, false); },
+    onMouseLeave: (e) => { setKey(key, false); }
+  });
+
+  const buttonBaseStyle = {
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    touchAction: 'none',
+    fontFamily: '"Press Start 2P", monospace',
+    color: '#00ffff',
+    background: 'rgba(0, 30, 60, 0.7)',
+    border: '2px solid #00ffff',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: 'bold',
+    textShadow: '0 0 5px #00ffff',
+    boxShadow: '0 0 10px rgba(0, 255, 255, 0.4)'
+  };
+
+  const dpadSize = 60;
+  const actionSize = 65;
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: 0,
+        right: 0,
+        bottom: 50,
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'flex-end',
+        padding: '0 20px',
+        pointerEvents: 'none',
+        zIndex: 200
+      }}
+    >
+      {/* Left: D-pad (movement) */}
+      <div style={{
+        position: 'relative',
+        width: dpadSize * 3,
+        height: dpadSize * 3,
+        pointerEvents: 'auto'
+      }}>
+        {/* Up (W = depth back) */}
+        <div
+          {...pressHandlers('w')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: dpadSize,
+            top: 0,
+            width: dpadSize,
+            height: dpadSize
+          }}
+        >▲</div>
+        {/* Left (A) */}
+        <div
+          {...pressHandlers('a')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: 0,
+            top: dpadSize,
+            width: dpadSize,
+            height: dpadSize
+          }}
+        >◀</div>
+        {/* Right (D) */}
+        <div
+          {...pressHandlers('d')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: dpadSize * 2,
+            top: dpadSize,
+            width: dpadSize,
+            height: dpadSize
+          }}
+        >▶</div>
+        {/* Down (S = depth forward) */}
+        <div
+          {...pressHandlers('s')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: dpadSize,
+            top: dpadSize * 2,
+            width: dpadSize,
+            height: dpadSize
+          }}
+        >▼</div>
+      </div>
+
+      {/* Right: Action buttons (Y-pattern like SNES) */}
+      <div style={{
+        position: 'relative',
+        width: actionSize * 3,
+        height: actionSize * 3,
+        pointerEvents: 'auto'
+      }}>
+        {/* Top: JUMP (space) */}
+        <div
+          {...pressHandlers(' ')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: actionSize,
+            top: 0,
+            width: actionSize,
+            height: actionSize,
+            background: 'rgba(60, 60, 0, 0.7)',
+            border: '2px solid #ffff00',
+            color: '#ffff00',
+            textShadow: '0 0 5px #ffff00',
+            boxShadow: '0 0 10px rgba(255, 255, 0, 0.4)',
+            fontSize: '11px'
+          }}
+        >JUMP</div>
+        {/* Left: PUNCH (J) */}
+        <div
+          {...pressHandlers('j')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: 0,
+            top: actionSize,
+            width: actionSize,
+            height: actionSize,
+            background: 'rgba(60, 0, 30, 0.7)',
+            border: '2px solid #ff3366',
+            color: '#ff3366',
+            textShadow: '0 0 5px #ff3366',
+            boxShadow: '0 0 10px rgba(255, 51, 102, 0.4)',
+            fontSize: '10px'
+          }}
+        >PUNCH</div>
+        {/* Right: KICK (K) */}
+        <div
+          {...pressHandlers('k')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: actionSize * 2,
+            top: actionSize,
+            width: actionSize,
+            height: actionSize,
+            background: 'rgba(60, 30, 0, 0.7)',
+            border: '2px solid #ff9900',
+            color: '#ff9900',
+            textShadow: '0 0 5px #ff9900',
+            boxShadow: '0 0 10px rgba(255, 153, 0, 0.4)',
+            fontSize: '11px'
+          }}
+        >KICK</div>
+        {/* Bottom: SPECIAL (L) */}
+        <div
+          {...pressHandlers('l')}
+          style={{
+            ...buttonBaseStyle,
+            position: 'absolute',
+            left: actionSize,
+            top: actionSize * 2,
+            width: actionSize,
+            height: actionSize,
+            background: 'rgba(40, 0, 60, 0.7)',
+            border: '2px solid #ff00ff',
+            color: '#ff00ff',
+            textShadow: '0 0 5px #ff00ff',
+            boxShadow: '0 0 10px rgba(255, 0, 255, 0.4)',
+            fontSize: '9px'
+          }}
+        >SPECIAL</div>
+      </div>
+    </div>
+  );
+};
+
 const BeatEmUpGame = () => {
   const [screen, setScreen] = useState('menu'); // menu, lobby, game
   const [socket, setSocket] = useState(null);
@@ -41,6 +240,33 @@ const BeatEmUpGame = () => {
       .catch(err => {
         console.warn('Bill sprites failed to load, using procedural fallback:', err);
       });
+  }, []);
+
+  // Load the single stage PNG (replaces procedural parallax background)
+  const stageImageRef = useRef(null);
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => {
+      stageImageRef.current = img;
+      console.log('Stage background loaded');
+    };
+    img.onerror = () => {
+      console.warn('Stage background failed to load - falling back to procedural');
+    };
+    img.src = '/sprites/stage.png';
+  }, []);
+
+  // Detect mobile devices for showing touch controls
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const checkMobile = () => {
+      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      const smallScreen = window.innerWidth < 900;
+      setIsMobile(hasTouch || smallScreen);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
   // Initialize socket connection
@@ -291,14 +517,26 @@ const BeatEmUpGame = () => {
       ctx.save();
       ctx.translate(shakeX, shakeY);
 
-      // Draw parallax scrolling background
-      drawParallaxBackground(
-        ctx,
-        gameState.currentZoneIndex,
-        cameraX,
-        gameState.worldWidth,
-        gameState.worldHeight
-      );
+      // Draw stage: prefer single PNG background, fall back to procedural parallax
+      const stageImg = stageImageRef.current;
+      if (stageImg && stageImg.complete && stageImg.naturalWidth > 0) {
+        // Draw stage image, offset by camera; image is sized to gameState.worldWidth
+        ctx.drawImage(stageImg, -cameraX, 0);
+        // If world is wider than image, fill remainder with last column color
+        if (stageImg.naturalWidth < gameState.worldWidth) {
+          ctx.fillStyle = '#1a1a2a';
+          ctx.fillRect(stageImg.naturalWidth - cameraX, 0,
+            gameState.worldWidth - stageImg.naturalWidth, stageImg.naturalHeight);
+        }
+      } else {
+        drawParallaxBackground(
+          ctx,
+          gameState.currentZoneIndex,
+          cameraX,
+          gameState.worldWidth,
+          gameState.worldHeight
+        );
+      }
 
       // Play area depth boundaries are rendered through the tiled ground
       // No need for explicit line — the back wall transitions to floor naturally
@@ -826,6 +1064,11 @@ const BeatEmUpGame = () => {
             )}
           </div>
 
+          {/* Mobile Touch Controls - only on touch devices */}
+          {isMobile && (
+            <MobileControls keysPressed={keysPressed} />
+          )}
+
           {/* Bottom HUD */}
           <div style={{
             padding: '15px',
@@ -837,12 +1080,19 @@ const BeatEmUpGame = () => {
             fontSize: '9px',
             flexWrap: 'wrap'
           }}>
-            <span>A/D: MOVE</span>
-            <span>W/S: DEPTH</span>
-            <span>SPACE: JUMP</span>
-            <span>J: PUNCH</span>
-            <span>K: KICK</span>
-            <span>L: SPECIAL</span>
+            {!isMobile && (
+              <>
+                <span>A/D: MOVE</span>
+                <span>W/S: DEPTH</span>
+                <span>SPACE: JUMP</span>
+                <span>J: PUNCH</span>
+                <span>K: KICK</span>
+                <span>L: SPECIAL</span>
+              </>
+            )}
+            {isMobile && (
+              <span>TOUCH CONTROLS BELOW</span>
+            )}
           </div>
         </div>
       )}
