@@ -3,53 +3,25 @@
  *
  * The source images are JPGs with a transparency-style checker background.
  * We chroma-key out the checker pattern to get usable sprites with alpha.
+ *
+ * Approach: Adaptive edge color sampling + Euclidean distance matching +
+ * flood fill from edges. Validates result and throws on failure so the
+ * caller can fall back to procedural rendering instead of drawing garbage.
  */
 
 const SPRITE_SHEETS = {
-  punch: {
-    src: '/sprites/crawlerbill6framewalk.jpg',
-    frames: 6,
-    // Frame layout: horizontal strip
-  },
-  kick: {
-    src: '/sprites/8framekick.jpg',
-    frames: 8,
-  },
-  portrait: {
-    src: '/sprites/CorporateCrawlerBill.jpg',
-    frames: 1,
-  }
+  punch: { src: '/sprites/crawlerbill6framewalk.jpg', frames: 6 },
+  kick: { src: '/sprites/8framekick.jpg', frames: 8 },
+  portrait: { src: '/sprites/CorporateCrawlerBill.jpg', frames: 1 }
 };
 
 /**
- * Strict check: is a pixel CLEARLY part of the gray checker background?
+ * Process a sprite sheet image: remove checker background via flood fill
+ * using adaptively-sampled edge colors.
  *
- * Tight thresholds to avoid removing character outline pixels that are
- * slightly desaturated due to JPG compression at the body/background boundary.
+ * Throws if chroma key clearly failed (caller uses procedural fallback).
  */
-function isCheckerGray(r, g, b) {
-  // Must be very nearly grayscale (R ≈ G ≈ B within tight tolerance)
-  const maxC = Math.max(r, g, b);
-  const minC = Math.min(r, g, b);
-  if (maxC - minC > 10) return false;
-  // Brightness in the actual checker band (light ~200, dark ~150)
-  const avg = (r + g + b) / 3;
-  return avg >= 135 && avg <= 220;
-}
-
-/**
- * Process an image to remove checker background → transparency
- *
- * Strategy:
- * 1. Flood fill from all 4 edges, marking connected gray pixels transparent.
- *    Strict gray threshold to avoid eating character outline pixels.
- * 2. Isolated-pixel noise filter (snapshot-based, no cascading) to remove
- *    stray colored JPG speckles in transparent areas.
- *
- * No cleanup pass - the flood fill + noise filter combo is reliable
- * without risking cascading erosion into the character body.
- */
-function processSheet(img) {
+function processSheet(img, label) {
   const canvas = document.createElement('canvas');
   canvas.width = img.naturalWidth;
   canvas.height = img.naturalHeight;
@@ -59,11 +31,71 @@ function processSheet(img) {
 
   const w = canvas.width;
   const h = canvas.height;
+  if (w === 0 || h === 0) {
+    throw new Error(`${label}: image has zero dimensions (${w}x${h})`);
+  }
+
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
-  const visited = new Uint8Array(w * h);
 
-  // ---- PASS 1: Flood fill gray from edges ----
+  // -------- Step 1: Sample edge colors --------
+  // Walk the perimeter, sampling many pixels. We then filter to those that
+  // look like background (low color saturation), giving us an adaptive
+  // palette that matches whatever the JPG actually decoded to.
+  const edgeColors = [];
+  const sampleStride = 2; // Sample every 2 pixels along the edge
+
+  for (let x = 0; x < w; x += sampleStride) {
+    const tIdx = x * 4;
+    edgeColors.push([data[tIdx], data[tIdx + 1], data[tIdx + 2]]);
+    const bIdx = ((h - 1) * w + x) * 4;
+    edgeColors.push([data[bIdx], data[bIdx + 1], data[bIdx + 2]]);
+  }
+  for (let y = 0; y < h; y += sampleStride) {
+    const lIdx = (y * w) * 4;
+    edgeColors.push([data[lIdx], data[lIdx + 1], data[lIdx + 2]]);
+    const rIdx = (y * w + w - 1) * 4;
+    edgeColors.push([data[rIdx], data[rIdx + 1], data[rIdx + 2]]);
+  }
+
+  // Filter to background-looking samples: low saturation (R≈G≈B).
+  // Character pixels have noticeable saturation (skin, blue jeans, green shirt).
+  const lowSatSamples = edgeColors.filter(([r, g, b]) => {
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    return maxC - minC < 30;
+  });
+
+  // Deduplicate the palette to a manageable size (cluster by 8-bit bins)
+  const seen = new Set();
+  const palette = [];
+  const source = lowSatSamples.length >= 8 ? lowSatSamples : edgeColors;
+  for (const c of source) {
+    const key = (c[0] >> 3) * 1024 + (c[1] >> 3) * 32 + (c[2] >> 3);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    palette.push(c);
+  }
+
+  console.log(`[SpriteLoader] ${label}: ${w}x${h}, sampled ${edgeColors.length} edge colors → ${palette.length} unique background colors`);
+
+  // -------- Step 2: Define adaptive isBackground matcher --------
+  // A pixel is background if it's within Euclidean distance N of ANY palette
+  // color. This adapts to whatever the JPG decoded into.
+  const DIST_SQ = 40 * 40;
+  function isBackground(r, g, b) {
+    for (let i = 0; i < palette.length; i++) {
+      const c = palette[i];
+      const dr = r - c[0];
+      const dg = g - c[1];
+      const db = b - c[2];
+      if (dr * dr + dg * dg + db * db < DIST_SQ) return true;
+    }
+    return false;
+  }
+
+  // -------- Step 3: Flood fill from edges --------
+  const visited = new Uint8Array(w * h);
   const stack = [];
   for (let x = 0; x < w; x++) {
     stack.push(x, 0);
@@ -83,19 +115,18 @@ function processSheet(img) {
     visited[ptr] = 1;
 
     const idx = ptr * 4;
-    if (!isCheckerGray(data[idx], data[idx + 1], data[idx + 2])) continue;
+    if (!isBackground(data[idx], data[idx + 1], data[idx + 2])) continue;
 
     data[idx + 3] = 0;
-
     stack.push(x + 1, y);
     stack.push(x - 1, y);
     stack.push(x, y + 1);
     stack.push(x, y - 1);
   }
 
-  // ---- PASS 2: Isolated-pixel noise filter (snapshot-based) ----
-  // Any opaque pixel with fewer than 3 opaque neighbors (3x3) is a stray
-  // speck and gets removed. Snapshot prevents cascading erosion.
+  // -------- Step 4: Snapshot-based noise filter --------
+  // Removes isolated opaque speckles (JPG color noise in transparent regions).
+  // Snapshot ensures we count ORIGINAL neighbor state, not cascading.
   const snapshotAlpha = new Uint8Array(w * h);
   for (let i = 0; i < w * h; i++) {
     snapshotAlpha[i] = data[i * 4 + 3];
@@ -120,21 +151,35 @@ function processSheet(img) {
     }
   }
 
+  // -------- Step 5: Validate --------
+  // Count transparent pixels. If too few, the chroma key clearly failed
+  // (e.g., palette was wrong). Throw so caller uses procedural fallback.
+  let transparentCount = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (data[i * 4 + 3] === 0) transparentCount++;
+  }
+  const transparentRatio = transparentCount / (w * h);
+  console.log(`[SpriteLoader] ${label}: ${(transparentRatio * 100).toFixed(1)}% transparent after processing`);
+
+  if (transparentRatio < 0.20) {
+    throw new Error(`${label}: chroma key removed only ${(transparentRatio * 100).toFixed(1)}% of pixels`);
+  }
+
   ctx.putImageData(imageData, 0, 0);
   return canvas;
 }
 
 /**
- * Find the LARGEST connected component of opaque pixels using flood fill
- * Returns bounding box of just that component, excluding any leftover noise.
+ * Find the bounding box of the LARGEST connected opaque component.
+ * Ignores stray noise pixels.
  */
 function findMainContentBounds(frameCtx, w, h) {
   const imageData = frameCtx.getImageData(0, 0, w, h);
   const data = imageData.data;
-  const componentId = new Int32Array(w * h); // 0 = unvisited
+  const componentId = new Int32Array(w * h);
   let nextId = 1;
   let bestSize = 0;
-  let bestBounds = { minX: w, maxX: 0, minY: h, maxY: 0 };
+  let bestBounds = null;
 
   for (let startY = 0; startY < h; startY++) {
     for (let startX = 0; startX < w; startX++) {
@@ -142,7 +187,6 @@ function findMainContentBounds(frameCtx, w, h) {
       if (componentId[startPtr] !== 0) continue;
       if (data[startPtr * 4 + 3] === 0) continue;
 
-      // BFS this component
       const id = nextId++;
       const stack = [startX, startY];
       let size = 0;
@@ -176,19 +220,16 @@ function findMainContentBounds(frameCtx, w, h) {
     }
   }
 
-  return bestSize > 0 ? bestBounds : null;
+  return bestSize > 50 ? bestBounds : null; // Need at least 50 pixels for a real character
 }
 
 /**
- * Crop tight bounding box from a frame (find content boundaries)
- * Uses LARGEST connected component to ignore stray noise pixels.
- * Returns { canvas, width, height, anchorX, anchorY }
+ * Crop a frame from a processed sheet using the largest connected component
  */
-function cropFrame(sheet, frameIndex, totalFrames) {
+function cropFrame(sheet, frameIndex, totalFrames, label) {
   const fullFrameWidth = sheet.width / totalFrames;
   const fullFrameHeight = sheet.height;
 
-  // Extract this frame to a temporary canvas
   const frameCanvas = document.createElement('canvas');
   frameCanvas.width = fullFrameWidth;
   frameCanvas.height = fullFrameHeight;
@@ -198,64 +239,67 @@ function cropFrame(sheet, frameIndex, totalFrames) {
     frameIndex * fullFrameWidth, 0, fullFrameWidth, fullFrameHeight,
     0, 0, fullFrameWidth, fullFrameHeight);
 
-  // Find bounding box of the LARGEST connected component
-  // This ensures tight cropping even if there's leftover noise in the frame
   const bounds = findMainContentBounds(frameCtx, fullFrameWidth, fullFrameHeight);
 
-  if (bounds) {
-    const cropW = bounds.maxX - bounds.minX + 1;
-    const cropH = bounds.maxY - bounds.minY + 1;
-    const croppedCanvas = document.createElement('canvas');
-    croppedCanvas.width = cropW;
-    croppedCanvas.height = cropH;
-    const croppedCtx = croppedCanvas.getContext('2d');
-    croppedCtx.imageSmoothingEnabled = false;
-    croppedCtx.drawImage(frameCanvas, bounds.minX, bounds.minY, cropW, cropH, 0, 0, cropW, cropH);
-    return {
-      canvas: croppedCanvas,
-      width: cropW,
-      height: cropH,
-      // Anchor at bottom-center (feet position)
-      anchorX: cropW / 2,
-      anchorY: cropH
-    };
+  if (!bounds) {
+    throw new Error(`${label} frame ${frameIndex}: no content found after processing`);
   }
 
-  // Fallback: return full frame
+  const cropW = bounds.maxX - bounds.minX + 1;
+  const cropH = bounds.maxY - bounds.minY + 1;
+
+  // Sanity check: cropped content should be smaller than full frame
+  // (if crop is the entire frame, chroma key clearly didn't work for this frame)
+  if (cropW >= fullFrameWidth * 0.95 && cropH >= fullFrameHeight * 0.95) {
+    throw new Error(`${label} frame ${frameIndex}: bbox covers entire frame - chroma key failed`);
+  }
+
+  const croppedCanvas = document.createElement('canvas');
+  croppedCanvas.width = cropW;
+  croppedCanvas.height = cropH;
+  const croppedCtx = croppedCanvas.getContext('2d');
+  croppedCtx.imageSmoothingEnabled = false;
+  croppedCtx.drawImage(frameCanvas, bounds.minX, bounds.minY, cropW, cropH, 0, 0, cropW, cropH);
+
   return {
-    canvas: frameCanvas,
-    width: fullFrameWidth,
-    height: fullFrameHeight,
-    anchorX: fullFrameWidth / 2,
-    anchorY: fullFrameHeight
+    canvas: croppedCanvas,
+    width: cropW,
+    height: cropH,
+    anchorX: cropW / 2,
+    anchorY: cropH // feet at bottom
   };
 }
 
 /**
- * Load and process a sprite sheet, returning array of frame canvases
+ * Load a sprite sheet and slice into frames
  */
-function loadSheet(src, frames) {
+function loadSheet(src, frames, label) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    // Same-origin assets, no CORS needed
     img.onload = () => {
       try {
-        const processedSheet = processSheet(img);
+        const processed = processSheet(img, label);
         const frameList = [];
         for (let i = 0; i < frames; i++) {
-          frameList.push(cropFrame(processedSheet, i, frames));
+          frameList.push(cropFrame(processed, i, frames, label));
         }
+        console.log(`[SpriteLoader] ${label}: loaded ${frames} frames`);
         resolve(frameList);
       } catch (err) {
+        console.error(`[SpriteLoader] ${label} failed:`, err.message);
         reject(err);
       }
     };
-    img.onerror = (err) => reject(err);
+    img.onerror = (err) => {
+      console.error(`[SpriteLoader] ${label}: image failed to load from ${src}`);
+      reject(err);
+    };
     img.src = src;
   });
 }
 
-// Cache loaded sprites at module level
+// Module-level sprite cache
 let _sprites = null;
 let _loadPromise = null;
 
@@ -264,23 +308,23 @@ export function loadBillSprites() {
   if (_loadPromise) return _loadPromise;
 
   _loadPromise = Promise.all([
-    loadSheet(SPRITE_SHEETS.punch.src, SPRITE_SHEETS.punch.frames),
-    loadSheet(SPRITE_SHEETS.kick.src, SPRITE_SHEETS.kick.frames),
-    loadSheet(SPRITE_SHEETS.portrait.src, 1)
+    loadSheet(SPRITE_SHEETS.punch.src, SPRITE_SHEETS.punch.frames, 'punch'),
+    loadSheet(SPRITE_SHEETS.kick.src, SPRITE_SHEETS.kick.frames, 'kick'),
+    loadSheet(SPRITE_SHEETS.portrait.src, 1, 'portrait')
   ]).then(([punchFrames, kickFrames, portraitFrames]) => {
     _sprites = {
       punch: punchFrames,
       kick: kickFrames,
       portrait: portraitFrames[0],
-      // Idle = use first punch frame (relaxed stance)
       idle: punchFrames[0],
-      // Walk cycle = punch frames 0-2 (movement-like frames before extending)
       walk: [punchFrames[0], punchFrames[1], punchFrames[2]]
     };
+    console.log('[SpriteLoader] All Bill sprites loaded successfully');
     return _sprites;
   }).catch(err => {
-    console.error('Failed to load Bill sprites:', err);
+    console.error('[SpriteLoader] Bill sprites failed to load completely:', err);
     _loadPromise = null;
+    _sprites = null;
     throw err;
   });
 
@@ -292,45 +336,38 @@ export function getBillSprites() {
 }
 
 /**
- * Pick which frame to draw based on unit state and timing
+ * Pick which sprite frame to use based on unit state and current time
  */
 export function pickBillFrame(unit, now) {
   if (!_sprites) return null;
 
-  // Knocked out - use idle frame
   if (unit.isKnockedOut) {
     return { sprite: _sprites.idle, type: 'idle' };
   }
 
-  // Attacking - use attack animation
   if (unit.isAttacking) {
     const elapsed = now - (unit.attackStartTime || now);
     const duration = unit.attackDuration || 300;
     const progress = Math.min(1, elapsed / duration);
 
     if (unit.attackType === 'kick') {
-      // 8-frame kick
       const frameIdx = Math.min(7, Math.floor(progress * 8));
       return { sprite: _sprites.kick[frameIdx], type: 'kick' };
     } else if (unit.attackType === 'special') {
-      // Use last frame of punch (biggest impact) and hold
       return { sprite: _sprites.punch[5], type: 'special' };
     } else {
-      // Punch: cycle through frames 3-5 quickly (extending punch)
       const punchFrames = [3, 4, 5, 5];
       const frameIdx = punchFrames[Math.min(3, Math.floor(progress * 4))];
       return { sprite: _sprites.punch[frameIdx], type: 'punch' };
     }
   }
 
-  // Walking - cycle walk frames
   const isMoving = Math.abs(unit.velocityX || 0) > 0.3;
   if (isMoving) {
     const frameIdx = Math.floor(now / 150) % _sprites.walk.length;
     return { sprite: _sprites.walk[frameIdx], type: 'walk' };
   }
 
-  // Idle
   return { sprite: _sprites.idle, type: 'idle' };
 }
 

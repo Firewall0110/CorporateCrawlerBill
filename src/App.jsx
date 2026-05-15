@@ -887,13 +887,16 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   ctx.ellipse(cx, unitGroundY + h - 2, (w / 2) * shadowScale, 5 * shadowScale, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // === Use Bill sprite rendering for players if loaded ===
-  const billSprites = getBillSprites();
-  if (unit.team === 'players' && billSprites) {
-    drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now);
-    return;
+  // === Use Bill sprite rendering for players if loaded AND a valid frame exists ===
+  if (unit.team === 'players' && getBillSprites()) {
+    const billFrame = pickBillFrame(unit, now);
+    if (billFrame && billFrame.sprite && billFrame.sprite.canvas) {
+      drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, billFrame);
+      return;
+    }
+    // If frame invalid, fall through to procedural rendering below
   }
-  // Else fall through to procedural rendering for enemies / when sprites not yet loaded
+  // Procedural rendering for enemies / when sprites failed to load
 
   // Skip drawing body if knocked out (fall over animation)
   const koTilt = unit.isKnockedOut ? Math.PI / 2 : 0;
@@ -1038,16 +1041,9 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 /**
  * Draw Bill using sprite sheets (Corporate Crawler Bill character)
  * Handles idle, walking, punching, kicking animations + flipping
+ * Frame is pre-validated by caller in drawUnit
  */
-function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now) {
-  const frame = pickBillFrame(unit, now);
-  if (!frame || !frame.sprite || !frame.sprite.canvas) {
-    // Fallback - just draw a placeholder
-    ctx.fillStyle = unit.color || '#888';
-    ctx.fillRect(screenX, screenY, w, h);
-    return;
-  }
-
+function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
   const sprite = frame.sprite;
   // Bill renders at fixed beat-em-up scale (not relative to small hitbox)
   // Idle/punch: 180px tall - clearly visible, ~26% of 700px canvas height
