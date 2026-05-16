@@ -255,6 +255,229 @@ const MobileControls = ({ keysPressed, cooldownsRef }) => {
   );
 };
 
+/**
+ * VictoryScreen - dedicated full-screen 16-bit splash shown after defeating boss
+ *
+ * Takes over the ENTIRE viewport so the game canvas (which is unmounted at
+ * this point) doesn't keep rendering stale frames. Animated with CSS
+ * keyframes for confetti, pulsing glow, rainbow text, and blinking subtitle.
+ */
+const VictoryScreen = ({ onBackToMenu }) => {
+  // Generate confetti pieces once at mount
+  const confetti = React.useMemo(() => {
+    const colors = ['#ff3344', '#ffaa22', '#ffee33', '#33ff66', '#33ccff', '#aa55ff', '#ff44cc'];
+    return Array.from({ length: 80 }, (_, i) => ({
+      x: Math.random() * 100,
+      delay: Math.random() * 5,
+      duration: 3 + Math.random() * 5,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      size: 6 + Math.floor(Math.random() * 10),
+      rotateDir: Math.random() > 0.5 ? 1 : -1,
+      drift: (Math.random() - 0.5) * 60
+    }));
+  }, []);
+
+  // Pixel-style stars in the background
+  const stars = React.useMemo(() => Array.from({ length: 40 }, () => ({
+    x: Math.random() * 100,
+    y: Math.random() * 100,
+    delay: Math.random() * 2,
+    size: 2 + Math.floor(Math.random() * 3)
+  })), []);
+
+  // Inject CSS keyframes
+  const keyframes = `
+    @keyframes vs-pulseGlow {
+      0%, 100% {
+        text-shadow: 0 0 12px #ffff00, 0 0 24px #ff00ff, 0 0 48px #ff00ff;
+        transform: scale(1);
+      }
+      50% {
+        text-shadow: 0 0 24px #ffff00, 0 0 48px #ff00ff, 0 0 96px #ff00ff;
+        transform: scale(1.04);
+      }
+    }
+    @keyframes vs-rainbow {
+      0%   { color: #ff3344; }
+      16%  { color: #ffaa22; }
+      33%  { color: #ffee33; }
+      50%  { color: #33ff66; }
+      66%  { color: #33ccff; }
+      83%  { color: #aa55ff; }
+      100% { color: #ff3344; }
+    }
+    @keyframes vs-popIn {
+      0% { transform: translateY(-80px) scale(0.5); opacity: 0; }
+      60% { transform: translateY(8px) scale(1.1); opacity: 1; }
+      100% { transform: translateY(0) scale(1); opacity: 1; }
+    }
+    @keyframes vs-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.25; }
+    }
+    @keyframes vs-fall {
+      0%   { transform: translateY(-50px) translateX(0) rotate(0deg); }
+      100% { transform: translateY(110vh) translateX(var(--drift)) rotate(var(--rotate)); }
+    }
+    @keyframes vs-twinkle {
+      0%, 100% { opacity: 0.3; transform: scale(0.7); }
+      50% { opacity: 1; transform: scale(1.2); }
+    }
+    @keyframes vs-scroll {
+      0% { transform: translateX(100%); }
+      100% { transform: translateX(-100%); }
+    }
+    .vs-pixel { image-rendering: pixelated; image-rendering: crisp-edges; }
+  `;
+
+  return (
+    <>
+      <style>{keyframes}</style>
+      <div
+        className="vs-pixel"
+        style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'linear-gradient(180deg, #1a0033 0%, #2a0055 30%, #4a0080 60%, #2a0055 100%)',
+          overflow: 'hidden',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000,
+          fontFamily: '"Press Start 2P", monospace'
+        }}
+      >
+        {/* Twinkling pixel stars */}
+        {stars.map((s, i) => (
+          <div key={`star-${i}`} style={{
+            position: 'absolute',
+            left: `${s.x}%`,
+            top: `${s.y}%`,
+            width: s.size,
+            height: s.size,
+            background: '#ffffff',
+            animation: `vs-twinkle ${1.5 + s.delay}s ease-in-out infinite`,
+            animationDelay: `${s.delay}s`,
+            pointerEvents: 'none'
+          }} />
+        ))}
+
+        {/* Falling confetti */}
+        {confetti.map((c, i) => (
+          <div key={`conf-${i}`} style={{
+            position: 'absolute',
+            top: -20,
+            left: `${c.x}%`,
+            width: c.size,
+            height: c.size,
+            background: c.color,
+            border: '1px solid rgba(0,0,0,0.4)',
+            animation: `vs-fall ${c.duration}s linear ${c.delay}s infinite`,
+            '--drift': `${c.drift}px`,
+            '--rotate': `${c.rotateDir * 720}deg`,
+            pointerEvents: 'none'
+          }} />
+        ))}
+
+        {/* Top scrolling marquee */}
+        <div style={{
+          position: 'absolute',
+          top: '40px',
+          left: 0,
+          right: 0,
+          height: '32px',
+          overflow: 'hidden',
+          background: 'rgba(0,0,0,0.5)',
+          borderTop: '2px solid #ffff00',
+          borderBottom: '2px solid #ffff00'
+        }}>
+          <div style={{
+            display: 'inline-block',
+            whiteSpace: 'nowrap',
+            color: '#ffee33',
+            fontSize: '14px',
+            paddingTop: '8px',
+            animation: 'vs-scroll 18s linear infinite'
+          }}>
+            ★ HERO STATUS ACHIEVED ★ BOSS DEFEATED ★ CRITICAL PRIORITY 1 RESOLVED ★ TICKETS CLOSED ★ COFFEE EARNED ★
+          </div>
+        </div>
+
+        {/* Title block */}
+        <div style={{ textAlign: 'center', zIndex: 2, marginTop: '20px' }}>
+          <h2 style={{
+            fontSize: 'clamp(20px, 3vw, 36px)',
+            color: '#ffee33',
+            margin: '0 0 24px 0',
+            animation: 'vs-pulseGlow 2.4s ease-in-out infinite, vs-popIn 0.6s ease-out'
+          }}>
+            CONGRATS ON RETIREMENT
+          </h2>
+          <h1 style={{
+            fontSize: 'clamp(48px, 9vw, 110px)',
+            margin: '0 0 40px 0',
+            animation: 'vs-pulseGlow 1.8s ease-in-out infinite, vs-rainbow 4s linear infinite, vs-popIn 0.7s ease-out 0.3s backwards',
+            letterSpacing: '0.08em',
+            textShadow: '0 0 24px #ff00ff'
+          }}>
+            BILL!
+          </h1>
+          <p style={{
+            fontSize: 'clamp(14px, 2vw, 24px)',
+            color: '#00ffff',
+            margin: 0,
+            animation: 'vs-blink 1.4s ease-in-out infinite, vs-popIn 0.6s ease-out 0.6s backwards',
+            textShadow: '0 0 12px #00ffff'
+          }}>
+            YOU SURVIVED THE CRAWL!
+          </p>
+        </div>
+
+        {/* Back to menu */}
+        <button
+          onClick={onBackToMenu}
+          style={{
+            marginTop: '60px',
+            padding: '20px 50px',
+            fontSize: '16px',
+            fontFamily: '"Press Start 2P", monospace',
+            background: '#33ff66',
+            color: '#0a0010',
+            border: '3px solid #ffffff',
+            borderRadius: '0',
+            cursor: 'pointer',
+            boxShadow: '0 0 30px rgba(51, 255, 102, 0.7), 0 4px 0 #117733',
+            textShadow: '1px 1px 0 rgba(0,0,0,0.3)',
+            transition: 'transform 0.1s',
+            zIndex: 2,
+            animation: 'vs-popIn 0.6s ease-out 1.2s backwards'
+          }}
+          onMouseEnter={(e) => { e.target.style.transform = 'scale(1.05)'; }}
+          onMouseLeave={(e) => { e.target.style.transform = 'scale(1)'; }}
+          onMouseDown={(e) => { e.target.style.transform = 'translateY(2px)'; }}
+          onMouseUp={(e) => { e.target.style.transform = 'scale(1.05)'; }}
+        >
+          ▶ BACK TO MENU
+        </button>
+
+        {/* Bottom corner credit */}
+        <div style={{
+          position: 'absolute',
+          bottom: '20px',
+          fontSize: '10px',
+          color: '#ffffff',
+          opacity: 0.5,
+          textAlign: 'center',
+          width: '100%'
+        }}>
+          ※ CORPORATE CRAWLER BILL ※ END OF SHIFT ※
+        </div>
+      </div>
+    </>
+  );
+};
+
 const BeatEmUpGame = () => {
   const [screen, setScreen] = useState('menu'); // menu, lobby, game
   const [socket, setSocket] = useState(null);
@@ -476,7 +699,10 @@ const BeatEmUpGame = () => {
 
     newSocket.on('levelComplete', ({ message }) => {
       console.log(message);
+      // Switch to the dedicated victory screen so the game canvas unmounts
+      // (avoids stale frames being rendered from the just-finished room)
       setLevelWon(true);
+      setScreen('victory');
     });
 
     newSocket.on('error', ({ message }) => {
@@ -705,6 +931,28 @@ const BeatEmUpGame = () => {
     // not in deps to avoid recreating the interval each render
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [screen]);
+
+  // Reset all room/game state and return to the menu screen.
+  // Used by both victory screen and game-over flows so a new game starts clean.
+  const resetToMenu = () => {
+    setLevelWon(false);
+    setGameState(null);
+    setRoomId('');
+    setPlayerId('');
+    setCameraX(0);
+    // Clear visual effects refs
+    damageNumbersRef.current = [];
+    hitParticlesRef.current = [];
+    screenShakeRef.current = { intensity: 0, until: 0 };
+    flashEffectRef.current = { color: null, until: 0 };
+    cooldownsRef.current = {
+      punch: { start: 0, end: 0 },
+      kick: { start: 0, end: 0 },
+      special: { start: 0, end: 0 }
+    };
+    keysPressed.current = {};
+    setScreen('menu');
+  };
 
   const createRoom = () => {
     console.log('[CreateRoom] Button clicked', { playerName, socketConnected: socket?.connected });
@@ -1009,6 +1257,10 @@ const BeatEmUpGame = () => {
         </div>
       )}
 
+      {screen === 'victory' && (
+        <VictoryScreen onBackToMenu={resetToMenu} />
+      )}
+
       {screen === 'game' && gameState && (
         <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
           {/* Top HUD */}
@@ -1049,66 +1301,7 @@ const BeatEmUpGame = () => {
               }}
             />
 
-            {/* Victory Screen */}
-            {levelWon && (
-              <div style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0, 0, 0, 0.85)',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'center',
-                zIndex: 100
-              }}>
-                <div style={{
-                  textAlign: 'center',
-                  fontFamily: '"Press Start 2P", monospace',
-                  color: '#00ff00'
-                }}>
-                  <h1 style={{ fontSize: '40px', marginBottom: '30px', textShadow: '0 0 20px #00ff00' }}>
-                    VICTORY!
-                  </h1>
-                  <p style={{ fontSize: '18px', marginBottom: '20px', color: '#ffff00' }}>
-                    You defeated the
-                  </p>
-                  <p style={{ fontSize: '18px', marginBottom: '40px', color: '#ff3366' }}>
-                    Critical Priority 1 Outage!
-                  </p>
-                  <button
-                    onClick={() => {
-                      setLevelWon(false);
-                      setScreen('menu');
-                    }}
-                    style={{
-                      padding: '20px 40px',
-                      fontSize: '16px',
-                      fontFamily: '"Press Start 2P", monospace',
-                      background: '#00ffff',
-                      color: '#000000',
-                      border: 'none',
-                      borderRadius: '5px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      boxShadow: '0 0 20px rgba(0, 255, 255, 0.5)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.background = '#33ffff';
-                      e.target.style.boxShadow = '0 0 40px rgba(0, 255, 255, 0.8)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.background = '#00ffff';
-                      e.target.style.boxShadow = '0 0 20px rgba(0, 255, 255, 0.5)';
-                    }}
-                  >
-                    BACK TO MENU
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Victory is now handled by the dedicated VictoryScreen above (screen==='victory') */}
 
             {/* Game Over Screen */}
             {gameState?.playerDead && !levelWon && (

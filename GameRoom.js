@@ -638,13 +638,26 @@ class GameRoom {
   }
 
   /**
-   * Level complete
+   * Level complete - boss defeated, victory!
+   * Stops the game loop after a grace period so clients get the levelComplete
+   * event and can transition cleanly to the victory screen.
    */
   levelComplete() {
+    if (this.status === 'finished') return; // idempotent
+
     this.status = 'finished';
     this.io.to(this.id).emit('levelComplete', {
       message: 'You defeated the Critical Priority 1 Outage!'
     });
+
+    // Stop the game loop after a brief grace period to avoid spamming
+    // gameState broadcasts to clients that already moved on to victory screen.
+    setTimeout(() => {
+      if (this.gameLoop) {
+        clearInterval(this.gameLoop);
+        this.gameLoop = null;
+      }
+    }, 500);
   }
 
   /**
