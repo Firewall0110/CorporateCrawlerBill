@@ -1296,17 +1296,21 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
   const sprite = frame.sprite;
   // Bill renders at fixed beat-em-up scale (not relative to small hitbox)
-  // Idle/punch: 180px tall - clearly visible, ~26% of 700px canvas height
-  // Kick: 220px tall - extra room for high kick reaching above head
+  // Most animations: 180px tall - clearly visible, ~26% of 700px canvas height
+  // Kick/jump/special: taller frames - leg/arm reaches above the sprite normal
   // Hitbox stays small (40x60) for snappy combat collision
-  const isKickFrame = frame.type === 'kick';
-  const drawH = isKickFrame ? 220 : 180;
+  const isTallFrame = frame.type === 'kick' || frame.type === 'jump' || frame.type === 'special';
+  const drawH = isTallFrame ? 220 : 180;
   const aspect = sprite.canvas.width / sprite.canvas.height;
   const drawW = drawH * aspect;
   const cx = screenX + w / 2;
   const feetY = screenY + h;
   const drawX = cx - drawW / 2;
   const drawY = feetY - drawH + bobAmount;
+
+  // The sheet has separate walk-left / walk-right rows; for those, frame.mirror=false
+  // For other anims (punch/kick/etc.) only one direction is drawn, so we flip when facing left
+  const shouldMirror = !!frame.mirror;
 
   ctx.save();
 
@@ -1316,15 +1320,11 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
     ctx.shadowBlur = 12;
   }
 
-  // Knockout tilt
-  if (unit.isKnockedOut) {
-    ctx.translate(cx, screenY + h);
-    ctx.rotate((Math.PI / 2) * facing);
-    ctx.translate(-cx, -(screenY + h));
-  }
+  // Note: the "defeated" row already shows fall animation, so no extra tilt
+  // for knocked-out characters - just play through the row's frames
 
-  // Handle horizontal flip for facing left
-  if (facing < 0) {
+  // Apply horizontal flip if frame says so
+  if (shouldMirror) {
     ctx.translate(drawX + drawW, 0);
     ctx.scale(-1, 1);
     ctx.drawImage(sprite.canvas, 0, drawY, drawW, drawH);
@@ -1336,10 +1336,9 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
 
   // Hit flash overlay
   if (hitFlash) {
-    // Use globalCompositeOperation to tint the sprite white
     ctx.globalCompositeOperation = 'source-atop';
     ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-    if (facing < 0) {
+    if (shouldMirror) {
       ctx.fillRect(0, drawY, drawW, drawH);
     } else {
       ctx.fillRect(drawX, drawY, drawW, drawH);
