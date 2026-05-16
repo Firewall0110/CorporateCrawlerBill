@@ -670,15 +670,41 @@ const BeatEmUpGame = () => {
   }, [gameState, screen, playerId, cameraX]);
 
   // Fetch available rooms
+  // FIXED: endpoint is /api/rooms - the wildcard route catches anything else
+  // and returns index.html, which then fails JSON.parse silently.
   const fetchRooms = async () => {
     try {
-      const response = await fetch(`${SERVER_URL}/rooms`);
+      const response = await fetch(`${SERVER_URL}/api/rooms`);
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Expected JSON, got ${contentType}`);
+      }
       const data = await response.json();
-      setAvailableRooms(data.rooms);
+      setAvailableRooms(Array.isArray(data.rooms) ? data.rooms : []);
     } catch (err) {
-      console.error('Failed to fetch rooms:', err);
+      console.error('[fetchRooms] failed:', err);
+      // Show error to user instead of just silently logging
+      setError(`Could not load room list: ${err.message}`);
+      setTimeout(() => setError(''), 4000);
+      setAvailableRooms([]);
     }
   };
+
+  // Auto-refresh the room list every 3 seconds while on the lobby screen
+  // (so newly-created rooms appear without manual REFRESH clicks)
+  useEffect(() => {
+    if (screen !== 'lobby') return;
+    const interval = setInterval(() => {
+      fetchRooms();
+    }, 3000);
+    return () => clearInterval(interval);
+    // fetchRooms is stable-enough (defined inside component); intentionally
+    // not in deps to avoid recreating the interval each render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screen]);
 
   const createRoom = () => {
     console.log('[CreateRoom] Button clicked', { playerName, socketConnected: socket?.connected });
