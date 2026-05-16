@@ -24,10 +24,8 @@ class GameRoom {
     this.createdAt = Date.now();
     this.lastUpdateTime = Date.now();
 
-    // World settings - expanded for 4-direction movement
-    // Width matches stage.png (5000 wide) - covers all zones + boss arena
-    // Each section is 500 wide for breathing room and visual detail
-    this.worldWidth = 5000;
+    // World settings - 4 independent STAGES, each with its own coordinate system
+    // Each stage starts at x=0 and has its own worldWidth (2500 for stages 0-2, 1500 for boss)
     this.worldHeight = 800; // Doubled height for vertical movement
     this.gravity = 0.8;
     this.groundLevel = 600; // Front of play area (closest to viewer)
@@ -37,13 +35,19 @@ class GameRoom {
     this.tickRate = 1000 / 60; // 60 FPS
     this.gameLoop = null;
 
-    // Level system - Section-based progression
+    // Level system - 4 stages, each with sections
+    this.zoneConfig = this.createZoneConfig();
     this.currentZoneIndex = 0;
     this.currentSectionIndex = 0;
-    this.sectionWavesClear = false; // Has current section's wave been cleared?
-    this.sectionWavesSpawned = false; // Have we already spawned waves for this section?
+    this.sectionWavesClear = false;
+    this.sectionWavesSpawned = false;
+    this.worldWidth = this.zoneConfig[0].width; // Current stage's width
     this.maxRightBound = 300; // Player can't move beyond this X until section is clear
-    this.zoneConfig = this.createZoneConfig();
+
+    // Stage transition state - when player completes a stage, they auto-exit
+    // right and the next stage loads after a brief animation window
+    this.stageTransition = null; // { startTime: ms, nextStageIndex: int }
+    this.STAGE_TRANSITION_DURATION = 2500; // ms
 
     // Track which sections have already been spawned (prevents respawn on backtracking)
     // Key format: "zoneIndex-sectionIndex"
@@ -80,96 +84,98 @@ class GameRoom {
    * Progression: Enter section -> Wave spawns -> Clear wave -> Can advance to next section
    */
   createZoneConfig() {
-    // Updated for 5000-wide world (matches new stage.png):
-    //   Parking Lot: 0-1500    (3 sections × 500)
-    //   Quad:        1500-3000 (3 sections × 500)
-    //   Lobby:       3000-4500 (3 sections × 500)
-    //   Elevators:   4500-5000 (boss arena, 500)
+    // Each stage is its OWN independent world starting at x=0
+    // Stages 1-3: width 2500, sections 800 wide (3 sections + transition zone)
+    // Stage 4 (boss): width 1500, single boss section
     return [
       {
-        name: 'Parking Lot',
+        name: 'Garage',
+        width: 2500,
         sections: [
           {
-            name: 'Parking Lot - Section 1',
-            xRange: { start: 0, end: 500 },
+            name: 'Garage - Section 1',
+            xRange: { start: 0, end: 800 },
             waves: [
-              { enemyType: 'printer-ticket', count: 2, spawnX: 250 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 400 }
             ]
           },
           {
-            name: 'Parking Lot - Section 2',
-            xRange: { start: 500, end: 1000 },
+            name: 'Garage - Section 2',
+            xRange: { start: 800, end: 1600 },
             waves: [
-              { enemyType: 'email-ticket', count: 2, spawnX: 750 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 1200 }
             ]
           },
           {
-            name: 'Parking Lot - Section 3',
-            xRange: { start: 1000, end: 1500 },
+            name: 'Garage - Section 3',
+            xRange: { start: 1600, end: 2400 },
             waves: [
-              { enemyType: 'printer-ticket', count: 2, spawnX: 1250 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 2000 }
             ]
           }
         ]
       },
       {
         name: 'Quad',
+        width: 2500,
         sections: [
           {
             name: 'Quad - Section 1',
-            xRange: { start: 1500, end: 2000 },
+            xRange: { start: 0, end: 800 },
             waves: [
-              { enemyType: 'email-ticket', count: 2, spawnX: 1750 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 400 }
             ]
           },
           {
             name: 'Quad - Section 2',
-            xRange: { start: 2000, end: 2500 },
+            xRange: { start: 800, end: 1600 },
             waves: [
-              { enemyType: 'network-ticket', count: 2, spawnX: 2250 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 1200 }
             ]
           },
           {
             name: 'Quad - Section 3',
-            xRange: { start: 2500, end: 3000 },
+            xRange: { start: 1600, end: 2400 },
             waves: [
-              { enemyType: 'email-ticket', count: 2, spawnX: 2750 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 2000 }
             ]
           }
         ]
       },
       {
         name: 'Lobby',
+        width: 2500,
         sections: [
           {
             name: 'Lobby - Section 1',
-            xRange: { start: 3000, end: 3500 },
+            xRange: { start: 0, end: 800 },
             waves: [
-              { enemyType: 'network-ticket', count: 2, spawnX: 3250 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 400 }
             ]
           },
           {
             name: 'Lobby - Section 2',
-            xRange: { start: 3500, end: 4000 },
+            xRange: { start: 800, end: 1600 },
             waves: [
-              { enemyType: 'printer-ticket', count: 2, spawnX: 3750 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 1200 }
             ]
           },
           {
             name: 'Lobby - Section 3',
-            xRange: { start: 4000, end: 4500 },
+            xRange: { start: 1600, end: 2400 },
             waves: [
-              { enemyType: 'network-ticket', count: 2, spawnX: 4250 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 2000 }
             ]
           }
         ]
       },
       {
-        name: 'Elevators',
+        name: 'Server Room',
+        width: 1500,
         sections: [
           {
-            name: 'Elevators - Boss',
-            xRange: { start: 4500, end: 5000 },
+            name: 'Server Room - Boss',
+            xRange: { start: 0, end: 1500 },
             isBoss: true,
             waves: []
           }
@@ -250,6 +256,21 @@ class GameRoom {
     if (!this.debugUpdateLogged) {
       debugLog(`[GameRoom ${this.id}] Game update running! Status: ${this.status}`);
       this.debugUpdateLogged = true;
+    }
+
+    // Stage transition: players auto-run right off-screen, no combat
+    if (this.stageTransition) {
+      const runSpeed = 6;
+      this.players.forEach(player => {
+        player.velocityX = runSpeed;
+        player.direction = 1;
+        // Allow them to run past worldWidth (off the right edge)
+        // Use 2x worldWidth as the clamping bound during transition
+        player.x = Math.min(player.x + runSpeed, this.worldWidth + 200);
+        // Just update vertical / cooldowns (skip the player.update boundary clamp)
+        if (player.attackCooldown > 0) player.attackCooldown -= deltaTime;
+      });
+      return; // Skip everything else during transition
     }
 
     // Update all players
@@ -436,26 +457,85 @@ class GameRoom {
   /**
    * Advance to next zone
    */
-  advanceZone() {
-    if (this.currentZoneIndex >= this.zoneConfig.length - 1) {
-      return; // Already at boss zone
+  /**
+   * Begin a transition from the current stage to the next.
+   * Locks player input (server forces auto-run right), runs animation timer,
+   * then calls finishStageTransition() to actually swap stages.
+   */
+  beginStageTransition() {
+    if (this.currentZoneIndex >= this.zoneConfig.length - 1) return;
+    if (this.stageTransition) return; // already transitioning
+
+    this.stageTransition = {
+      startTime: Date.now(),
+      fromStageIndex: this.currentZoneIndex,
+      nextStageIndex: this.currentZoneIndex + 1
+    };
+
+    debugLog(`[Stage] Transitioning from ${this.zoneConfig[this.currentZoneIndex].name}`);
+
+    this.io.to(this.id).emit('stageTransitionStart', {
+      fromStageIndex: this.currentZoneIndex,
+      fromStageName: this.zoneConfig[this.currentZoneIndex].name,
+      nextStageIndex: this.currentZoneIndex + 1,
+      nextStageName: this.zoneConfig[this.currentZoneIndex + 1].name,
+      duration: this.STAGE_TRANSITION_DURATION
+    });
+
+    // Schedule the actual stage swap
+    setTimeout(() => this.finishStageTransition(), this.STAGE_TRANSITION_DURATION);
+  }
+
+  /**
+   * Actually swap to the next stage. Called by setTimeout from beginStageTransition.
+   * Resets player coords to start of new stage, spawns boss if it's the boss stage,
+   * fires stageStarted event.
+   */
+  finishStageTransition() {
+    if (!this.stageTransition) return;
+
+    const nextIdx = this.stageTransition.nextStageIndex;
+    const nextStage = this.zoneConfig[nextIdx];
+    if (!nextStage) {
+      this.stageTransition = null;
+      return;
     }
 
-    this.currentZoneIndex++;
+    this.currentZoneIndex = nextIdx;
     this.currentSectionIndex = 0;
     this.sectionWavesClear = false;
-    this.sectionWavesSpawned = false; // Reset for new zone's sections
+    this.sectionWavesSpawned = false;
     this.zoneProgressed = false;
 
-    const zone = this.zoneConfig[this.currentZoneIndex];
-    const firstSection = zone.sections?.[0];
+    // Each stage is its own independent world
+    this.worldWidth = nextStage.width;
 
+    // Reset player positions to left side of new stage
+    const midDepth = (this.playAreaTop + this.groundLevel) / 2 + 40;
+    this.players.forEach(player => {
+      player.x = 100;
+      player.y = midDepth;
+      player.groundY = midDepth;
+      player.velocityX = 0;
+      player.velocityY = 0;
+      player.isKnockedOut = false;
+      player.health = player.maxHealth;
+    });
+
+    // Clear any enemies / boss carried over (defensive)
+    this.enemies = [];
+    if (this.boss) {
+      this.boss = null;
+    }
+
+    // First section's maxRightBound
+    const firstSection = nextStage.sections?.[0];
     if (firstSection) {
       this.maxRightBound = firstSection.xRange.end;
     }
 
-    // If boss zone, spawn boss
-    if (zone.sections && zone.sections[0]?.isBoss) {
+    // Boss stage: spawn boss
+    if (firstSection?.isBoss) {
       this.spawnBoss();
       this.io.to(this.id).emit('bossEncounter', {
         bossName: 'Critical Priority 1 Outage',
@@ -463,10 +543,24 @@ class GameRoom {
       });
     }
 
+    this.io.to(this.id).emit('stageStarted', {
+      stageIndex: this.currentZoneIndex,
+      stageName: nextStage.name,
+      worldWidth: nextStage.width
+    });
+
     this.io.to(this.id).emit('zoneChange', {
-      zoneName: zone.name,
+      zoneName: nextStage.name,
       zoneIndex: this.currentZoneIndex
     });
+
+    this.stageTransition = null;
+    debugLog(`[Stage] Now in ${nextStage.name}`);
+  }
+
+  /** Backwards-compat alias - some other callers still call this */
+  advanceZone() {
+    this.beginStageTransition();
   }
 
   /**
@@ -786,6 +880,8 @@ class GameRoom {
    * Handle player input
    */
   handlePlayerInput(socketId, input) {
+    // Ignore input during stage transitions (server auto-controls player)
+    if (this.stageTransition) return;
     const player = this.players.get(socketId);
     if (player) {
       player.handleInput(input, this.groundLevel, this.playAreaTop);
@@ -796,6 +892,7 @@ class GameRoom {
    * Handle player attack
    */
   handlePlayerAttack(socketId, attackType) {
+    if (this.stageTransition) return;
     const player = this.players.get(socketId);
     if (player) {
       player.performAttack(attackType);
@@ -869,9 +966,17 @@ class GameRoom {
       totalEnemyTarget: this.getTotalEnemyCount(), // For HUD progress display
       currentZone: zone,
       currentZoneIndex: this.currentZoneIndex,
+      currentStageIndex: this.currentZoneIndex, // alias for clarity
+      currentStageName: zone?.name,
       currentSection: currentSection,
       currentSectionIndex: this.currentSectionIndex,
       zoneCount: this.zoneConfig.length,
+      stageTransition: this.stageTransition ? {
+        elapsed: Date.now() - this.stageTransition.startTime,
+        duration: this.STAGE_TRANSITION_DURATION,
+        fromStageIndex: this.stageTransition.fromStageIndex,
+        nextStageIndex: this.stageTransition.nextStageIndex
+      } : null,
       maxRightBound: this.maxRightBound,
       sectionClear: this.sectionWavesClear,
       playerDead: this.playerDeadSocketId ? true : false,

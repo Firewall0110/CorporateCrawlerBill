@@ -490,6 +490,8 @@ const BeatEmUpGame = () => {
   const [error, setError] = useState('');
   const [cameraX, setCameraX] = useState(0);
   const [levelWon, setLevelWon] = useState(false);
+  // Stage transition state: { fromName, toName, until } shown as overlay
+  const [stageTransition, setStageTransition] = useState(null);
 
   const canvasRef = useRef(null);
   const keysPressed = useRef({});
@@ -531,18 +533,22 @@ const BeatEmUpGame = () => {
       });
   }, []);
 
-  // Load the single stage PNG (replaces procedural parallax background)
-  const stageImageRef = useRef(null);
+  // Load the 4 per-stage backgrounds (one per level)
+  // Falls back to /sprites/stage.png if specific stage images don't exist
+  const stageImagesRef = useRef([null, null, null, null]);
   useEffect(() => {
-    const img = new Image();
-    img.onload = () => {
-      stageImageRef.current = img;
-      console.log('Stage background loaded');
-    };
-    img.onerror = () => {
-      console.warn('Stage background failed to load - falling back to procedural');
-    };
-    img.src = '/sprites/stage.png';
+    const sources = ['/sprites/stage1.png', '/sprites/stage2.png', '/sprites/stage3.png', '/sprites/stage4.png'];
+    sources.forEach((src, idx) => {
+      const img = new Image();
+      img.onload = () => {
+        stageImagesRef.current[idx] = img;
+        console.log(`Stage ${idx + 1} loaded (${src})`);
+      };
+      img.onerror = () => {
+        console.warn(`Stage ${idx + 1} failed to load (${src})`);
+      };
+      img.src = src;
+    });
   }, []);
 
   // Detect mobile devices for showing touch controls
@@ -713,6 +719,30 @@ const BeatEmUpGame = () => {
       setScreen('victory');
     });
 
+    // Server has begun a stage transition - show the splash overlay
+    newSocket.on('stageTransitionStart', ({ fromStageName, nextStageName, duration }) => {
+      console.log(`[Stage] ${fromStageName} → ${nextStageName}`);
+      setStageTransition({
+        fromName: fromStageName,
+        toName: nextStageName,
+        until: Date.now() + duration
+      });
+      // Clear it slightly after duration so animation fully plays
+      setTimeout(() => setStageTransition(null), duration + 200);
+    });
+
+    // New stage has started - cooldowns reset, camera should snap to 0
+    newSocket.on('stageStarted', ({ stageName }) => {
+      console.log(`[Stage] Now playing: ${stageName}`);
+      // Reset client visual cooldowns + camera
+      cooldownsRef.current = {
+        punch: { start: 0, end: 0 },
+        kick: { start: 0, end: 0 },
+        special: { start: 0, end: 0 }
+      };
+      setCameraX(0);
+    });
+
     newSocket.on('error', ({ message }) => {
       setError(message);
       setTimeout(() => setError(''), 3000);
@@ -829,12 +859,11 @@ const BeatEmUpGame = () => {
       ctx.save();
       ctx.translate(shakeX, shakeY);
 
-      // Draw stage: prefer single PNG background, fall back to procedural parallax
-      const stageImg = stageImageRef.current;
+      // Draw stage: pick the image for the current stage index
+      const stageIdx = gameState.currentStageIndex ?? gameState.currentZoneIndex ?? 0;
+      const stageImg = stageImagesRef.current[stageIdx];
       if (stageImg && stageImg.complete && stageImg.naturalWidth > 0) {
-        // Draw stage image, offset by camera; image is sized to gameState.worldWidth
         ctx.drawImage(stageImg, -cameraX, 0);
-        // If world is wider than image, fill remainder with last column color
         if (stageImg.naturalWidth < gameState.worldWidth) {
           ctx.fillStyle = '#1a1a2a';
           ctx.fillRect(stageImg.naturalWidth - cameraX, 0,
@@ -948,6 +977,7 @@ const BeatEmUpGame = () => {
     setRoomId('');
     setPlayerId('');
     setCameraX(0);
+    setStageTransition(null);
     // Clear visual effects refs
     damageNumbersRef.current = [];
     hitParticlesRef.current = [];
@@ -1310,6 +1340,80 @@ const BeatEmUpGame = () => {
             />
 
             {/* Victory is now handled by the dedicated VictoryScreen above (screen==='victory') */}
+
+            {/* Stage Transition Splash */}
+            {stageTransition && (
+              <div style={{
+                position: 'absolute',
+                top: 0, left: 0, right: 0, bottom: 0,
+                background: 'rgba(0, 0, 0, 0.85)',
+                display: 'flex',
+                flexDirection: 'column',
+                justifyContent: 'center',
+                alignItems: 'center',
+                fontFamily: '"Press Start 2P", monospace',
+                zIndex: 90,
+                animation: 'stageTransIn 0.4s ease-out'
+              }}>
+                <style>{`
+                  @keyframes stageTransIn {
+                    0% { opacity: 0; transform: scale(0.9); }
+                    100% { opacity: 1; transform: scale(1); }
+                  }
+                  @keyframes stageLabelPop {
+                    0% { transform: translateY(-30px); opacity: 0; }
+                    60% { transform: translateY(6px); opacity: 1; }
+                    100% { transform: translateY(0); opacity: 1; }
+                  }
+                  @keyframes stageArrow {
+                    0%, 100% { transform: translateX(0); }
+                    50% { transform: translateX(20px); }
+                  }
+                `}</style>
+                <div style={{ textAlign: 'center', color: '#00ff66' }}>
+                  <div style={{
+                    fontSize: '16px',
+                    color: '#ffff00',
+                    marginBottom: '24px',
+                    animation: 'stageLabelPop 0.5s ease-out',
+                    textShadow: '0 0 10px #ffff00'
+                  }}>
+                    STAGE CLEAR!
+                  </div>
+                  <div style={{
+                    fontSize: '12px',
+                    color: '#aaaaaa',
+                    marginBottom: '12px'
+                  }}>
+                    {stageTransition.fromName}
+                  </div>
+                  <div style={{
+                    fontSize: '28px',
+                    color: '#00ff66',
+                    animation: 'stageArrow 0.7s ease-in-out infinite',
+                    marginBottom: '12px',
+                    textShadow: '0 0 20px #00ff66'
+                  }}>
+                    ▶ ▶ ▶
+                  </div>
+                  <div style={{
+                    fontSize: '22px',
+                    color: '#00ffff',
+                    animation: 'stageLabelPop 0.6s ease-out 0.3s backwards',
+                    textShadow: '0 0 12px #00ffff'
+                  }}>
+                    {stageTransition.toName}
+                  </div>
+                  <div style={{
+                    fontSize: '10px',
+                    color: '#888888',
+                    marginTop: '32px'
+                  }}>
+                    LOADING NEXT LEVEL...
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Game Over Screen */}
             {gameState?.playerDead && !levelWon && (

@@ -21,6 +21,7 @@
     "server": "node server.js",
     "server:dev": "nodemon server.js",
     "stage:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-stage.js",
+    "stages:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-stages.js",
     "tickets:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-tickets.js"
   },
   "eslintConfig": {
