@@ -25,8 +25,9 @@ class GameRoom {
     this.lastUpdateTime = Date.now();
 
     // World settings - expanded for 4-direction movement
-    // Width must accommodate all section xRanges (last section ends at 2700, boss at 3000)
-    this.worldWidth = 3200; // Allows full progression through all zones + boss arena
+    // Width matches stage.png (5000 wide) - covers all zones + boss arena
+    // Each section is 500 wide for breathing room and visual detail
+    this.worldWidth = 5000;
     this.worldHeight = 800; // Doubled height for vertical movement
     this.gravity = 0.8;
     this.groundLevel = 600; // Front of play area (closest to viewer)
@@ -79,29 +80,34 @@ class GameRoom {
    * Progression: Enter section -> Wave spawns -> Clear wave -> Can advance to next section
    */
   createZoneConfig() {
+    // Updated for 5000-wide world (matches new stage.png):
+    //   Parking Lot: 0-1500    (3 sections × 500)
+    //   Quad:        1500-3000 (3 sections × 500)
+    //   Lobby:       3000-4500 (3 sections × 500)
+    //   Elevators:   4500-5000 (boss arena, 500)
     return [
       {
         name: 'Parking Lot',
         sections: [
           {
             name: 'Parking Lot - Section 1',
-            xRange: { start: 0, end: 300 },
+            xRange: { start: 0, end: 500 },
             waves: [
-              { enemyType: 'printer-ticket', count: 2, spawnX: 150 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 250 }
             ]
           },
           {
             name: 'Parking Lot - Section 2',
-            xRange: { start: 300, end: 600 },
+            xRange: { start: 500, end: 1000 },
             waves: [
-              { enemyType: 'email-ticket', count: 2, spawnX: 450 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 750 }
             ]
           },
           {
             name: 'Parking Lot - Section 3',
-            xRange: { start: 600, end: 900 },
+            xRange: { start: 1000, end: 1500 },
             waves: [
-              { enemyType: 'printer-ticket', count: 2, spawnX: 750 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 1250 }
             ]
           }
         ]
@@ -111,23 +117,23 @@ class GameRoom {
         sections: [
           {
             name: 'Quad - Section 1',
-            xRange: { start: 900, end: 1200 },
+            xRange: { start: 1500, end: 2000 },
             waves: [
-              { enemyType: 'email-ticket', count: 2, spawnX: 1050 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 1750 }
             ]
           },
           {
             name: 'Quad - Section 2',
-            xRange: { start: 1200, end: 1500 },
+            xRange: { start: 2000, end: 2500 },
             waves: [
-              { enemyType: 'network-ticket', count: 2, spawnX: 1350 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 2250 }
             ]
           },
           {
             name: 'Quad - Section 3',
-            xRange: { start: 1500, end: 1800 },
+            xRange: { start: 2500, end: 3000 },
             waves: [
-              { enemyType: 'email-ticket', count: 2, spawnX: 1650 }
+              { enemyType: 'email-ticket', count: 2, spawnX: 2750 }
             ]
           }
         ]
@@ -137,23 +143,23 @@ class GameRoom {
         sections: [
           {
             name: 'Lobby - Section 1',
-            xRange: { start: 1800, end: 2100 },
+            xRange: { start: 3000, end: 3500 },
             waves: [
-              { enemyType: 'network-ticket', count: 2, spawnX: 1950 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 3250 }
             ]
           },
           {
             name: 'Lobby - Section 2',
-            xRange: { start: 2100, end: 2400 },
+            xRange: { start: 3500, end: 4000 },
             waves: [
-              { enemyType: 'printer-ticket', count: 2, spawnX: 2250 }
+              { enemyType: 'printer-ticket', count: 2, spawnX: 3750 }
             ]
           },
           {
             name: 'Lobby - Section 3',
-            xRange: { start: 2400, end: 2700 },
+            xRange: { start: 4000, end: 4500 },
             waves: [
-              { enemyType: 'network-ticket', count: 2, spawnX: 2550 }
+              { enemyType: 'network-ticket', count: 2, spawnX: 4250 }
             ]
           }
         ]
@@ -163,7 +169,7 @@ class GameRoom {
         sections: [
           {
             name: 'Elevators - Boss',
-            xRange: { start: 2700, end: 3000 },
+            xRange: { start: 4500, end: 5000 },
             isBoss: true,
             waves: []
           }
