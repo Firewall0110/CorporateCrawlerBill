@@ -6,25 +6,123 @@ import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
 
+// Client-side attack cooldown durations (ms) for mobile button visuals.
+// Must roughly match server-side Unit.attackCooldown for each attackType.
+const COOLDOWN_MS = { punch: 300, kick: 600, special: 5000 };
+
+/**
+ * Action button with cooldown sweep overlay.
+ * The overlay is a conic-gradient that goes from full coverage (just-pressed)
+ * to no coverage (cooldown finished), creating a clockwise "fill" indicator.
+ */
+const ActionButton = ({
+  cooldownKey, // 'punch' | 'kick' | 'special' | null (no cooldown)
+  cooldownsRef,
+  pressHandlers,
+  style,
+  label
+}) => {
+  // Read cooldown from ref. We rely on parent's rAF loop to re-render.
+  const cd = cooldownKey ? cooldownsRef?.current?.[cooldownKey] : null;
+  const now = Date.now();
+  let progress = 1; // 1 = ready, 0 = just-pressed
+  if (cd && cd.end > now && cd.end > cd.start) {
+    progress = (now - cd.start) / (cd.end - cd.start);
+    progress = Math.max(0, Math.min(1, progress));
+  }
+  const onCooldown = progress < 1;
+  // Format remaining seconds for special button
+  const remainingSec = onCooldown ? Math.ceil((cd.end - now) / 1000) : 0;
+
+  return (
+    <div
+      {...pressHandlers}
+      style={{
+        ...style,
+        position: 'absolute',
+        overflow: 'hidden',
+        opacity: onCooldown ? 0.6 : 1
+      }}
+    >
+      {/* Cooldown sweep overlay (conic gradient) */}
+      {onCooldown && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          borderRadius: '50%',
+          background: `conic-gradient(rgba(0,0,0,0.65) ${progress * 360}deg, transparent ${progress * 360}deg)`,
+          pointerEvents: 'none'
+        }} />
+      )}
+      {/* Button label (and remaining time for long cooldowns) */}
+      <div style={{
+        position: 'relative',
+        zIndex: 1,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center'
+      }}>
+        <span>{label}</span>
+        {cooldownKey === 'special' && onCooldown && (
+          <span style={{ fontSize: '11px', marginTop: '2px' }}>{remainingSec}s</span>
+        )}
+      </div>
+    </div>
+  );
+};
+
 /**
  * MobileControls - Touch-screen D-pad + action buttons for phones/tablets
  * Sets the same keysPressed flags that the keyboard handlers use,
  * so the input emit loop picks them up automatically.
+ *
+ * Action buttons show cooldown sweep animations and grey out while
+ * the ability is recharging. Special has a 5-second cooldown.
  */
-const MobileControls = ({ keysPressed }) => {
+const MobileControls = ({ keysPressed, cooldownsRef }) => {
+  // Force re-render at ~60fps to update cooldown sweep visuals
+  const [, forceUpdate] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => {
+    let raf;
+    const loop = () => {
+      // Only re-render if any cooldown is active (saves CPU when idle)
+      const now = Date.now();
+      const cds = cooldownsRef.current;
+      const anyActive = cds.punch.end > now || cds.kick.end > now || cds.special.end > now;
+      if (anyActive) forceUpdate();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [cooldownsRef]);
+
   const setKey = (key, down) => {
     keysPressed.current[key] = down;
   };
 
-  // Reusable touch handlers that prevent default scrolling/zoom behavior
-  const pressHandlers = (key) => ({
-    onTouchStart: (e) => { e.preventDefault(); setKey(key, true); },
+  // Check if an attack key should be blocked due to client-side cooldown
+  const isOnCooldown = (cdKey) => {
+    if (!cdKey) return false;
+    const cd = cooldownsRef.current[cdKey];
+    return cd && cd.end > Date.now();
+  };
+
+  // Reusable touch handlers; for attack keys, only register if not on cooldown
+  const pressHandlers = (key, cdKey) => ({
+    onTouchStart: (e) => {
+      e.preventDefault();
+      if (isOnCooldown(cdKey)) return;
+      setKey(key, true);
+    },
     onTouchEnd: (e) => { e.preventDefault(); setKey(key, false); },
     onTouchCancel: (e) => { e.preventDefault(); setKey(key, false); },
-    // Also support mouse for testing
-    onMouseDown: (e) => { e.preventDefault(); setKey(key, true); },
+    onMouseDown: (e) => {
+      e.preventDefault();
+      if (isOnCooldown(cdKey)) return;
+      setKey(key, true);
+    },
     onMouseUp: (e) => { e.preventDefault(); setKey(key, false); },
-    onMouseLeave: (e) => { setKey(key, false); }
+    onMouseLeave: () => { setKey(key, false); }
   });
 
   const buttonBaseStyle = {
@@ -47,7 +145,7 @@ const MobileControls = ({ keysPressed }) => {
   };
 
   const dpadSize = 60;
-  const actionSize = 65;
+  const actionSize = 70;
 
   return (
     <div
@@ -71,73 +169,28 @@ const MobileControls = ({ keysPressed }) => {
         height: dpadSize * 3,
         pointerEvents: 'auto'
       }}>
-        {/* Up (W = depth back) */}
-        <div
-          {...pressHandlers('w')}
-          style={{
-            ...buttonBaseStyle,
-            position: 'absolute',
-            left: dpadSize,
-            top: 0,
-            width: dpadSize,
-            height: dpadSize
-          }}
-        >▲</div>
-        {/* Left (A) */}
-        <div
-          {...pressHandlers('a')}
-          style={{
-            ...buttonBaseStyle,
-            position: 'absolute',
-            left: 0,
-            top: dpadSize,
-            width: dpadSize,
-            height: dpadSize
-          }}
-        >◀</div>
-        {/* Right (D) */}
-        <div
-          {...pressHandlers('d')}
-          style={{
-            ...buttonBaseStyle,
-            position: 'absolute',
-            left: dpadSize * 2,
-            top: dpadSize,
-            width: dpadSize,
-            height: dpadSize
-          }}
-        >▶</div>
-        {/* Down (S = depth forward) */}
-        <div
-          {...pressHandlers('s')}
-          style={{
-            ...buttonBaseStyle,
-            position: 'absolute',
-            left: dpadSize,
-            top: dpadSize * 2,
-            width: dpadSize,
-            height: dpadSize
-          }}
-        >▼</div>
+        <div {...pressHandlers('w')} style={{ ...buttonBaseStyle, position: 'absolute', left: dpadSize, top: 0, width: dpadSize, height: dpadSize }}>▲</div>
+        <div {...pressHandlers('a')} style={{ ...buttonBaseStyle, position: 'absolute', left: 0, top: dpadSize, width: dpadSize, height: dpadSize }}>◀</div>
+        <div {...pressHandlers('d')} style={{ ...buttonBaseStyle, position: 'absolute', left: dpadSize * 2, top: dpadSize, width: dpadSize, height: dpadSize }}>▶</div>
+        <div {...pressHandlers('s')} style={{ ...buttonBaseStyle, position: 'absolute', left: dpadSize, top: dpadSize * 2, width: dpadSize, height: dpadSize }}>▼</div>
       </div>
 
-      {/* Right: Action buttons (Y-pattern like SNES) */}
+      {/* Right: Action buttons (Y-pattern like SNES) with cooldown overlays */}
       <div style={{
         position: 'relative',
         width: actionSize * 3,
         height: actionSize * 3,
         pointerEvents: 'auto'
       }}>
-        {/* Top: JUMP (space) */}
-        <div
-          {...pressHandlers(' ')}
+        {/* JUMP (top) - no cooldown */}
+        <ActionButton
+          cooldownKey={null}
+          cooldownsRef={cooldownsRef}
+          pressHandlers={pressHandlers(' ', null)}
+          label="JUMP"
           style={{
             ...buttonBaseStyle,
-            position: 'absolute',
-            left: actionSize,
-            top: 0,
-            width: actionSize,
-            height: actionSize,
+            left: actionSize, top: 0, width: actionSize, height: actionSize,
             background: 'rgba(60, 60, 0, 0.7)',
             border: '2px solid #ffff00',
             color: '#ffff00',
@@ -145,17 +198,16 @@ const MobileControls = ({ keysPressed }) => {
             boxShadow: '0 0 10px rgba(255, 255, 0, 0.4)',
             fontSize: '11px'
           }}
-        >JUMP</div>
-        {/* Left: PUNCH (J) */}
-        <div
-          {...pressHandlers('j')}
+        />
+        {/* PUNCH (left) - short cooldown */}
+        <ActionButton
+          cooldownKey="punch"
+          cooldownsRef={cooldownsRef}
+          pressHandlers={pressHandlers('j', 'punch')}
+          label="PUNCH"
           style={{
             ...buttonBaseStyle,
-            position: 'absolute',
-            left: 0,
-            top: actionSize,
-            width: actionSize,
-            height: actionSize,
+            left: 0, top: actionSize, width: actionSize, height: actionSize,
             background: 'rgba(60, 0, 30, 0.7)',
             border: '2px solid #ff3366',
             color: '#ff3366',
@@ -163,17 +215,16 @@ const MobileControls = ({ keysPressed }) => {
             boxShadow: '0 0 10px rgba(255, 51, 102, 0.4)',
             fontSize: '10px'
           }}
-        >PUNCH</div>
-        {/* Right: KICK (K) */}
-        <div
-          {...pressHandlers('k')}
+        />
+        {/* KICK (right) - medium cooldown */}
+        <ActionButton
+          cooldownKey="kick"
+          cooldownsRef={cooldownsRef}
+          pressHandlers={pressHandlers('k', 'kick')}
+          label="KICK"
           style={{
             ...buttonBaseStyle,
-            position: 'absolute',
-            left: actionSize * 2,
-            top: actionSize,
-            width: actionSize,
-            height: actionSize,
+            left: actionSize * 2, top: actionSize, width: actionSize, height: actionSize,
             background: 'rgba(60, 30, 0, 0.7)',
             border: '2px solid #ff9900',
             color: '#ff9900',
@@ -181,17 +232,16 @@ const MobileControls = ({ keysPressed }) => {
             boxShadow: '0 0 10px rgba(255, 153, 0, 0.4)',
             fontSize: '11px'
           }}
-        >KICK</div>
-        {/* Bottom: SPECIAL (L) */}
-        <div
-          {...pressHandlers('l')}
+        />
+        {/* SPECIAL (bottom) - 5 second cooldown */}
+        <ActionButton
+          cooldownKey="special"
+          cooldownsRef={cooldownsRef}
+          pressHandlers={pressHandlers('l', 'special')}
+          label="SPECIAL"
           style={{
             ...buttonBaseStyle,
-            position: 'absolute',
-            left: actionSize,
-            top: actionSize * 2,
-            width: actionSize,
-            height: actionSize,
+            left: actionSize, top: actionSize * 2, width: actionSize, height: actionSize,
             background: 'rgba(40, 0, 60, 0.7)',
             border: '2px solid #ff00ff',
             color: '#ff00ff',
@@ -199,7 +249,7 @@ const MobileControls = ({ keysPressed }) => {
             boxShadow: '0 0 10px rgba(255, 0, 255, 0.4)',
             fontSize: '9px'
           }}
-        >SPECIAL</div>
+        />
       </div>
     </div>
   );
@@ -226,6 +276,14 @@ const BeatEmUpGame = () => {
   const hitParticlesRef = useRef([]); // {x, y, vx, vy, color, life}
   const screenShakeRef = useRef({ intensity: 0, until: 0 });
   const flashEffectRef = useRef({ color: null, until: 0 });
+
+  // Client-side cooldown predictions (for visual feedback on action buttons)
+  // Each entry: { start: ms, end: ms }. Read by MobileControls each frame.
+  const cooldownsRef = useRef({
+    punch: { start: 0, end: 0 },
+    kick: { start: 0, end: 0 },
+    special: { start: 0, end: 0 }
+  });
 
   const CANVAS_WIDTH = 1200;
   const CANVAS_HEIGHT = 700; // Expanded to show more vertical space
@@ -257,12 +315,25 @@ const BeatEmUpGame = () => {
   }, []);
 
   // Detect mobile devices for showing touch controls
+  // Uses multiple signals to avoid false positives (e.g. touch laptops)
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
     const checkMobile = () => {
-      const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+      // Signal 1: User-agent indicates mobile OS
+      const ua = navigator.userAgent || '';
+      const isMobileUA = /Mobile|Android|iPhone|iPad|iPod|BlackBerry|Opera Mini|IEMobile/i.test(ua);
+      // Signal 2: Device has touch input
+      const hasTouch = 'ontouchstart' in window || (navigator.maxTouchPoints || 0) > 0;
+      // Signal 3: Small viewport
       const smallScreen = window.innerWidth < 900;
-      setIsMobile(hasTouch || smallScreen);
+      // Signal 4: Coarse pointer (typically a finger, not a mouse)
+      const coarsePointer = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+
+      // Show mobile controls if:
+      // - Mobile UA, OR
+      // - Has touch AND (small screen OR coarse pointer)
+      const shouldShow = isMobileUA || (hasTouch && (smallScreen || coarsePointer));
+      setIsMobile(shouldShow);
     };
     checkMobile();
     window.addEventListener('resize', checkMobile);
@@ -459,19 +530,26 @@ const BeatEmUpGame = () => {
 
       socket.emit('playerInput', { roomId, input });
 
-      // Attack inputs
-      if (keysPressed.current['j']) {
-        socket.emit('playerAttack', { roomId, attackType: 'punch' });
-        keysPressed.current['j'] = false;
-      }
-      if (keysPressed.current['k']) {
-        socket.emit('playerAttack', { roomId, attackType: 'kick' });
-        keysPressed.current['k'] = false;
-      }
-      if (keysPressed.current['l']) {
-        socket.emit('playerAttack', { roomId, attackType: 'special' });
-        keysPressed.current['l'] = false;
-      }
+      // Attack inputs - respect client-side cooldowns and record for visual feedback
+      const nowMs = Date.now();
+      const tryAttack = (key, attackType) => {
+        if (!keysPressed.current[key]) return;
+        const cd = cooldownsRef.current[attackType];
+        if (cd && cd.end > nowMs) {
+          // Still on cooldown - swallow the press
+          keysPressed.current[key] = false;
+          return;
+        }
+        socket.emit('playerAttack', { roomId, attackType });
+        keysPressed.current[key] = false;
+        cooldownsRef.current[attackType] = {
+          start: nowMs,
+          end: nowMs + COOLDOWN_MS[attackType]
+        };
+      };
+      tryAttack('j', 'punch');
+      tryAttack('k', 'kick');
+      tryAttack('l', 'special');
     }, 16);
 
     return () => clearInterval(inputInterval);
@@ -1066,7 +1144,7 @@ const BeatEmUpGame = () => {
 
           {/* Mobile Touch Controls - only on touch devices */}
           {isMobile && (
-            <MobileControls keysPressed={keysPressed} />
+            <MobileControls keysPressed={keysPressed} cooldownsRef={cooldownsRef} />
           )}
 
           {/* Bottom HUD */}
@@ -1295,12 +1373,12 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
  */
 function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
   const sprite = frame.sprite;
-  // Bill renders at fixed beat-em-up scale (not relative to small hitbox)
-  // Most animations: 180px tall - clearly visible, ~26% of 700px canvas height
-  // Kick/jump/special: taller frames - leg/arm reaches above the sprite normal
+  // Bill renders at half the previous beat-em-up scale
+  // Most animations: 90px tall (~13% of canvas) - half of previous 180
+  // Kick/jump/special: 110px tall (half of previous 220) for extended reach
   // Hitbox stays small (40x60) for snappy combat collision
   const isTallFrame = frame.type === 'kick' || frame.type === 'jump' || frame.type === 'special';
-  const drawH = isTallFrame ? 220 : 180;
+  const drawH = isTallFrame ? 110 : 90;
   const aspect = sprite.canvas.width / sprite.canvas.height;
   const drawW = drawH * aspect;
   const cx = screenX + w / 2;

@@ -80,7 +80,7 @@ class Boss extends Enemy {
 
     // Boss AI parameters
     this.stoppingDistance = 150;
-    this.speed = 2;
+    this.speed = 4; // Doubled from 2 - boss now closes distance more aggressively
     this.detectionRange = 800;
   }
 

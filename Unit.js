@@ -261,11 +261,11 @@ class Unit {
         this.attackRadius = 60; // Larger radius - hits multiple
         break;
       case 'special':
-        // Area clear - big AoE attack
+        // Area clear - big AoE attack with fixed 5s cooldown
         this.attackRange = 150;
         this.attackPower = Math.round(this.effectiveStats.attack * 2.5);
         this.attackDuration = 500; // Long, dramatic animation
-        this.attackCooldown = cooldown * 2.5; // Very slow recovery
+        this.attackCooldown = 5; // Fixed 5 second cooldown (overrides attackSpeed scaling)
         this.attackRadius = 120; // Huge radius - clears area
         break;
     }
