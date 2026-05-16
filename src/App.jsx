@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
 import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
+import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
 
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
@@ -520,6 +521,13 @@ const BeatEmUpGame = () => {
       })
       .catch(err => {
         console.warn('Bill sprites failed to load, using procedural fallback:', err);
+      });
+    loadTicketSprites()
+      .then(() => {
+        console.log('Ticket sprites loaded successfully');
+      })
+      .catch(err => {
+        console.warn('Ticket sprites failed to load, using procedural fallback:', err);
       });
   }, []);
 
@@ -1443,6 +1451,17 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
     }
     // If frame invalid, fall through to procedural rendering below
   }
+
+  // === Use ticket-monster sprites for enemies if loaded ===
+  if (unit.team === 'enemies' && getTicketSprites()) {
+    const ticketFrame = pickTicketFrame(unit);
+    if (ticketFrame && ticketFrame.canvas) {
+      drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, now, ticketFrame);
+      return;
+    }
+    // Otherwise fall through to procedural
+  }
+
   // Procedural rendering for enemies / when sprites failed to load
 
   // Skip drawing body if knocked out (fall over animation)
@@ -1576,6 +1595,89 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   // === K.O. INDICATOR ===
   if (unit.isKnockedOut) {
     ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
+    ctx.font = 'bold 12px "Press Start 2P", monospace';
+    ctx.textAlign = 'center';
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 4;
+    ctx.fillText('K.O.', cx, screenY + h / 2);
+    ctx.shadowBlur = 0;
+  }
+}
+
+/**
+ * Draw an enemy as a help-ticket monster sprite.
+ * Frame is pre-validated by caller. Flips for facing direction, applies
+ * hit flash, attack-attacking "lunge", and renders health bar / KO text.
+ */
+function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, now, frame) {
+  const sprite = frame;
+  // Ticket sprites are intentionally a bit chunkier than the hitbox so they
+  // read clearly. They're shorter than Bill (matching enemy size hierarchy).
+  const drawH = 100;
+  const aspect = sprite.canvas.width / sprite.canvas.height;
+  const drawW = drawH * aspect;
+  const cx = screenX + w / 2;
+  const feetY = screenY + h;
+  const drawX = cx - drawW / 2;
+  const drawY = feetY - drawH + bobAmount;
+
+  ctx.save();
+
+  // Knockout: tilt over
+  if (unit.isKnockedOut) {
+    ctx.translate(cx, feetY);
+    ctx.rotate((Math.PI / 2) * facing);
+    ctx.translate(-cx, -feetY);
+  }
+
+  // Attacking: small forward lunge
+  let lunge = 0;
+  if (unit.isAttacking) {
+    const elapsed = now - (unit.attackStartTime || now);
+    const dur = unit.attackDuration || 300;
+    const t = Math.min(1, elapsed / dur);
+    lunge = facing * Math.sin(t * Math.PI) * 6;
+  }
+
+  // Flip for left-facing (tickets are drawn facing right)
+  if (facing < 0) {
+    ctx.translate(drawX + drawW + lunge, 0);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sprite.canvas, 0, drawY, drawW, drawH);
+  } else {
+    ctx.drawImage(sprite.canvas, drawX + lunge, drawY, drawW, drawH);
+  }
+
+  // Hit flash overlay (white tint on the sprite)
+  if (hitFlash) {
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    if (facing < 0) {
+      ctx.fillRect(0, drawY, drawW, drawH);
+    } else {
+      ctx.fillRect(drawX + lunge, drawY, drawW, drawH);
+    }
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  ctx.restore();
+
+  // Health bar (above sprite)
+  if (!unit.isKnockedOut) {
+    const barWidth = Math.max(w, 36);
+    const barHeight = 4;
+    const barX = cx - barWidth / 2;
+    const barY = drawY - 8;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
+    const hp = unit.health / unit.maxHealth;
+    ctx.fillStyle = hp > 0.5 ? '#00ff66' : hp > 0.25 ? '#ffcc00' : '#ff3333';
+    ctx.fillRect(barX, barY, barWidth * hp, barHeight);
+  }
+
+  // K.O. indicator
+  if (unit.isKnockedOut) {
+    ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
     ctx.font = 'bold 12px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
     ctx.shadowColor = '#000000';
