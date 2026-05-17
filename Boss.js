@@ -9,11 +9,11 @@ class Boss extends Enemy {
   constructor(id, name, baseStats = {}, position = { x: 1000, y: 350 }) {
     const bossStats = {
       maxHealth: 500,
-      attack: 20,
+      attack: 32,            // bumped: 20 -> 32 (harder hitting)
       attackSpeed: 1.0,
-      armor: 20,
-      attackRange: 150,
-      movementSpeed: 0.5,
+      armor: 25,             // slight bump: 20 -> 25
+      attackRange: 180,      // longer reach: 150 -> 180
+      movementSpeed: 0.85,   // significantly faster: 0.5 -> 0.85
       ...baseStats
     };
 
@@ -23,44 +23,45 @@ class Boss extends Enemy {
     this.isBoss = true;
     this.showHealthBar = true;
 
-    // Attack patterns - rebalanced with clear telegraphs and counter-play
+    // BIGGER hitbox so the boss feels like a real threat
+    this.width = 80;   // was 40 (inherited from Unit)
+    this.height = 110; // was 60
+
+    // Attack patterns - HARDER HITTING + cleaner telegraphs
     this.attacks = [
       {
         name: 'SystemDown',
         type: 'shockwave',
-        cooldown: 4500,
-        telegramDuration: 1500, // Long telegraph - boss winds up
+        cooldown: 4200,
+        telegramDuration: 1400,
         duration: 600,
-        damage: 12, // Reduced from 25
-        radius: 220,
+        damage: 22,           // bumped: 12 -> 22
+        radius: 260,          // bigger radius: 220 -> 260
         lastUsedTime: 0,
         // Counter: Jump over the shockwave OR move out of radius
-        // Shockwave doesn't hit airborne players
       },
       {
         name: 'DataCorruption',
         type: 'laserBeam',
-        cooldown: 5000,
-        telegramDuration: 1800, // Very long warning with laser sight
+        cooldown: 4800,
+        telegramDuration: 1600,
         duration: 700,
-        damage: 10, // Reduced from 15
-        beamWidth: 50,
+        damage: 20,           // bumped: 10 -> 20
+        beamWidth: 60,        // wider beam: 50 -> 60
         lastUsedTime: 0,
-        // Counter: Move along Y axis (depth) - the beam only hits players
-        // near the boss's current Y position
+        // Counter: Move along Y axis (depth) - beam only hits players near boss Y
       },
       {
         name: 'ServiceRestarts',
         type: 'targetZones',
-        cooldown: 6000,
-        telegramDuration: 2000, // Long pulsing warning
+        cooldown: 5500,
+        telegramDuration: 1800,
         duration: 800,
-        damage: 10, // Reduced from 20 per zone
-        zoneCount: 3,
-        zoneRadius: 75,
+        damage: 18,           // bumped: 10 -> 18 per zone
+        zoneCount: 4,         // more zones: 3 -> 4
+        zoneRadius: 85,       // bigger zones: 75 -> 85
         lastUsedTime: 0,
-        // Counter: Zones are placed at FIXED positions (not following players)
-        // and clearly visible - just move out of them before they explode
+        // Counter: Zones are placed at FIXED positions - move out before they explode
       }
     ];
 
@@ -79,9 +80,9 @@ class Boss extends Enemy {
     this.attackZones = []; // { x, y, radius, spawnTime }
 
     // Boss AI parameters
-    this.stoppingDistance = 150;
-    this.speed = 4; // Doubled from 2 - boss now closes distance more aggressively
-    this.detectionRange = 800;
+    this.stoppingDistance = 170; // Slightly larger stopping distance for bigger hitbox
+    this.speed = 7;              // Faster pursuit: 4 -> 7
+    this.detectionRange = 1000;  // Larger detection: 800 -> 1000
   }
 
   /**

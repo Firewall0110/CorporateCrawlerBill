@@ -582,12 +582,12 @@ class GameRoom {
     const healthMultiplier = 1 + (playerCount - 1) * 0.25;
 
     const bossStats = {
-      maxHealth: Math.round(300 * healthMultiplier),
-      attack: 18,
+      maxHealth: Math.round(420 * healthMultiplier), // bumped: 300 -> 420
+      attack: 32,            // bumped: 18 -> 32
       attackSpeed: 1.0,
-      armor: 20,
-      attackRange: 150,
-      movementSpeed: 0.4
+      armor: 25,             // bumped: 20 -> 25
+      attackRange: 180,      // bumped: 150 -> 180
+      movementSpeed: 0.85    // bumped: 0.4 -> 0.85 (over 2x)
     };
 
     this.boss = new Boss(

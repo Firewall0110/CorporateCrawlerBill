@@ -3,6 +3,7 @@ import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
 import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
 import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
+import { loadBossSprites, getBossSprites, pickBossFrame } from './BossSprites';
 
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
@@ -531,6 +532,9 @@ const BeatEmUpGame = () => {
       .catch(err => {
         console.warn('Ticket sprites failed to load, using procedural fallback:', err);
       });
+    loadBossSprites()
+      .then(() => console.log('Boss sprites loaded successfully'))
+      .catch(err => console.warn('Boss sprites failed to load, using procedural fallback:', err));
   }, []);
 
   // Load the 4 per-stage backgrounds (one per level)
@@ -2095,53 +2099,69 @@ function drawBoss(ctx, boss, cameraX, groundLevel, now) {
 
   // === Draw boss body (only if on screen) ===
   if (screenX + boss.width >= 0 && screenX <= ctx.canvas.width) {
-    // Charging glow during telegraph (intensity grows)
     const isCharging = boss.currentAttack && boss.currentAttack.isInTelegram;
     const chargeIntensity = isCharging ? boss.currentAttack.telegramProgress : 0;
-
-    if (isCharging) {
-      // Pulsing red glow when charging attack
-      const pulse = Math.sin(now / 100) * 0.5 + 0.5;
-      ctx.shadowColor = '#ff0000';
-      ctx.shadowBlur = 20 + chargeIntensity * 30 + pulse * 10;
-    } else {
-      ctx.shadowColor = '#ff00ff';
-      ctx.shadowBlur = 25;
-    }
-
-    // Boss body - large magenta rectangle
-    const bodyW = boss.width + 40;
-    const bodyH = boss.height + 40;
-    const bodyX = screenX - 20;
-    const bodyY = screenY - 20;
-
-    // Slight wobble when charging
     const wobble = isCharging ? Math.sin(now / 60) * 3 * chargeIntensity : 0;
 
-    ctx.fillStyle = isCharging ? '#cc00ff' : '#ff00ff';
-    ctx.fillRect(bodyX + wobble, bodyY, bodyW, bodyH);
+    // Try to use sprite-based rendering (Broadcast Storm)
+    const bossSprites = getBossSprites();
+    const bossFrame = bossSprites ? pickBossFrame(boss, now) : null;
 
-    // Detail: darker face area
-    ctx.fillStyle = '#660099';
-    ctx.fillRect(bodyX + 10 + wobble, bodyY + 15, bodyW - 20, 25);
+    if (bossFrame && bossFrame.sprite && bossFrame.sprite.canvas) {
+      const sprite = bossFrame.sprite;
+      // Render at 1.6x sprite scale so the boss feels massive
+      const drawH = 220;
+      const aspect = sprite.canvas.width / sprite.canvas.height;
+      const drawW = drawH * aspect;
+      const cx = screenX + boss.width / 2;
+      const feetY = screenY + boss.height;
+      const drawX = cx - drawW / 2 + wobble;
+      const drawY = feetY - drawH;
 
-    // Glowing eyes
-    const eyeColor = isCharging ? '#ff0000' : '#ffff00';
-    ctx.fillStyle = eyeColor;
-    ctx.fillRect(bodyX + 20 + wobble, bodyY + 25, 12, 8);
-    ctx.fillRect(bodyX + bodyW - 32 + wobble, bodyY + 25, 12, 8);
+      // Charge glow during telegraph
+      if (isCharging) {
+        const pulse = Math.sin(now / 100) * 0.5 + 0.5;
+        ctx.shadowColor = boss.currentAttack.type === 'laserBeam' ? '#ff00cc' :
+                          boss.currentAttack.type === 'targetZones' ? '#ffaa00' : '#00ddff';
+        ctx.shadowBlur = 15 + chargeIntensity * 25 + pulse * 8;
+      } else {
+        ctx.shadowColor = '#00ddff';
+        ctx.shadowBlur = 18;
+      }
 
-    // White inner eye glow
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(bodyX + 24 + wobble, bodyY + 28, 4, 4);
-    ctx.fillRect(bodyX + bodyW - 28 + wobble, bodyY + 28, 4, 4);
-
-    // "P1" stamp - the boss is a Priority 1 ticket personified
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ffff00';
-    ctx.font = 'bold 14px "Press Start 2P", monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('P1', bodyX + bodyW / 2 + wobble, bodyY + bodyH - 12);
+      ctx.drawImage(sprite.canvas, drawX, drawY, drawW, drawH);
+      ctx.shadowBlur = 0;
+    } else {
+      // Fallback: procedural body (the original magenta rectangle look)
+      if (isCharging) {
+        const pulse = Math.sin(now / 100) * 0.5 + 0.5;
+        ctx.shadowColor = '#ff0000';
+        ctx.shadowBlur = 20 + chargeIntensity * 30 + pulse * 10;
+      } else {
+        ctx.shadowColor = '#ff00ff';
+        ctx.shadowBlur = 25;
+      }
+      const bodyW = boss.width + 40;
+      const bodyH = boss.height + 40;
+      const bodyX = screenX - 20;
+      const bodyY = screenY - 20;
+      ctx.fillStyle = isCharging ? '#cc00ff' : '#ff00ff';
+      ctx.fillRect(bodyX + wobble, bodyY, bodyW, bodyH);
+      ctx.fillStyle = '#660099';
+      ctx.fillRect(bodyX + 10 + wobble, bodyY + 15, bodyW - 20, 25);
+      const eyeColor = isCharging ? '#ff0000' : '#ffff00';
+      ctx.fillStyle = eyeColor;
+      ctx.fillRect(bodyX + 20 + wobble, bodyY + 25, 12, 8);
+      ctx.fillRect(bodyX + bodyW - 32 + wobble, bodyY + 25, 12, 8);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(bodyX + 24 + wobble, bodyY + 28, 4, 4);
+      ctx.fillRect(bodyX + bodyW - 28 + wobble, bodyY + 28, 4, 4);
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#ffff00';
+      ctx.font = 'bold 14px "Press Start 2P", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('P1', bodyX + bodyW / 2 + wobble, bodyY + bodyH - 12);
+    }
   }
 
   ctx.shadowBlur = 0;
@@ -2185,7 +2205,7 @@ function drawBoss(ctx, boss, cameraX, groundLevel, now) {
   ctx.textAlign = 'center';
   ctx.shadowColor = '#000000';
   ctx.shadowBlur = 3;
-  ctx.fillText('CRITICAL PRIORITY 1 OUTAGE', ctx.canvas.width / 2, bossBarY - 6);
+  ctx.fillText('BROADCAST STORM - P1 OUTAGE', ctx.canvas.width / 2, bossBarY - 6);
   ctx.shadowBlur = 0;
 
   // Health number
