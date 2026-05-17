@@ -21,17 +21,20 @@
  */
 
 const SHEET_SRC = '/sprites/BillSpriteSheet.png';
-const COLS = 8;
+// Sheet is 880x1168, 7 cols × 7 rows of ~125×166 cells.
+// Each row has 7 animation frames (per CCBSpritesheet2.png layout).
+const COLS = 7;
 const ROWS = 7;
 
-// Row indices
-const ROW_WALK_LEFT = 0;
-const ROW_WALK_RIGHT = 1;
-const ROW_PUNCH = 2;
-const ROW_KICK = 3;
-const ROW_SPECIAL = 4;
-const ROW_DEFEATED = 5;
-const ROW_JUMP = 6;
+// Row indices match the labels on the sheet (top-to-bottom):
+//   WALK RIGHT, WALK LEFT, PUNCH, KICK, SPECIAL, JUMP, KNOCKED OUT
+const ROW_WALK_RIGHT = 0;
+const ROW_WALK_LEFT  = 1;
+const ROW_PUNCH      = 2;
+const ROW_KICK       = 3;
+const ROW_SPECIAL    = 4;
+const ROW_JUMP       = 5;
+const ROW_DEFEATED   = 6;
 
 // ===== Chroma-key processing (adaptive edge-sampled distance) =====
 
@@ -361,39 +364,39 @@ export function pickBillFrame(unit, now) {
     return frame;
   };
 
-  // KNOCKED OUT - row 5, progresses through fall and stays on last frame
+  // KNOCKED OUT - row 6, progresses through stagger -> fall -> lying
+  // Frame layout in this sheet:
+  //   0: stagger/recoil   1: stars burst (impact)   2: dizzy/standing
+  //   3-6: lying on ground (final rest pose held)
   if (unit.isKnockedOut) {
     if (!unit._koStartTime) unit._koStartTime = now;
     const koElapsed = now - unit._koStartTime;
-    // Play through all 8 frames over 800ms, then hold on last
-    const frameIdx = Math.min(7, Math.floor(koElapsed / 100));
+    // Play through all 7 frames over ~700ms, then hold on last (lying)
+    const frameIdx = Math.min(COLS - 1, Math.floor(koElapsed / 100));
     return { sprite: get(ROW_DEFEATED, frameIdx), mirror: facing < 0, type: 'defeated' };
   } else if (unit._koStartTime) {
-    // Respawned - reset
     unit._koStartTime = undefined;
   }
 
-  // JUMPING - row 6
+  // JUMPING - row 5 (jump)
+  // Frame layout: 0=stance/crouch, 1=launch, 2-3=apex/rising, 4=falling, 5-6=landing
   if (unit.isJumping) {
-    // Frame based on jump progress (up phase + down phase)
-    // velocityY < 0 = rising, > 0 = falling
-    // Use absolute velocity ratio to pick frame
     const vy = unit.velocityY || 0;
     let frameIdx;
     if (vy < -10) frameIdx = 1;       // launch
     else if (vy < -3) frameIdx = 2;   // rising
     else if (vy < 3) frameIdx = 3;    // apex
     else if (vy < 10) frameIdx = 4;   // falling
-    else frameIdx = 5;                // descending fast
+    else frameIdx = 5;                // descending fast / pre-land
     return { sprite: get(ROW_JUMP, frameIdx), mirror: facing < 0, type: 'jump' };
   }
 
-  // ATTACKING
+  // ATTACKING - 7 frames per attack animation
   if (unit.isAttacking) {
     const elapsed = now - (unit.attackStartTime || now);
     const duration = unit.attackDuration || 300;
     const progress = Math.min(0.999, elapsed / duration);
-    const frameIdx = Math.floor(progress * 8);
+    const frameIdx = Math.min(COLS - 1, Math.floor(progress * COLS));
 
     let row;
     if (unit.attackType === 'kick') row = ROW_KICK;
@@ -403,10 +406,11 @@ export function pickBillFrame(unit, now) {
     return { sprite: get(row, frameIdx), mirror: facing < 0, type: unit.attackType || 'punch' };
   }
 
-  // WALKING - use direction-specific row, no mirror
+  // WALKING - direction-specific row, no horizontal mirror needed
+  // (sheet has separate WALK_RIGHT and WALK_LEFT rows)
   const isMoving = Math.abs(unit.velocityX || 0) > 0.3;
   if (isMoving) {
-    const frameIdx = Math.floor(now / 130) % 8;
+    const frameIdx = Math.floor(now / 130) % COLS;
     const row = facing > 0 ? ROW_WALK_RIGHT : ROW_WALK_LEFT;
     return { sprite: get(row, frameIdx), mirror: false, type: 'walk' };
   }

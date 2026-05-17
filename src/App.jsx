@@ -1814,8 +1814,12 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   // Most animations: 90px tall (~13% of canvas) - half of previous 180
   // Kick/jump/special: 110px tall (half of previous 220) for extended reach
   // Hitbox stays small (40x60) for snappy combat collision
+  // Sprite sheet cells are ~125×166 with character content ~90×140 after
+  // tight bbox crop. Render at ~140 tall = roughly 1:1 pixel scale so the
+  // hand-drawn detail stays crisp. Tall poses (kick/jump/special) extend
+  // higher due to leg/arm reach.
   const isTallFrame = frame.type === 'kick' || frame.type === 'jump' || frame.type === 'special';
-  const drawH = isTallFrame ? 110 : 90;
+  const drawH = isTallFrame ? 170 : 140;
   const aspect = sprite.canvas.width / sprite.canvas.height;
   const drawW = drawH * aspect;
   const cx = screenX + w / 2;
