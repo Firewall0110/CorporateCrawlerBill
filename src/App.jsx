@@ -1810,18 +1810,15 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
  */
 function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
   const sprite = frame.sprite;
-  // Bill renders at half the previous beat-em-up scale
-  // Most animations: 90px tall (~13% of canvas) - half of previous 180
-  // Kick/jump/special: 110px tall (half of previous 220) for extended reach
-  // Hitbox stays small (40x60) for snappy combat collision
-  // Sprite sheet cells are ~125×166 with character content ~90×140 after
-  // tight bbox crop. Render at ~140 tall = roughly 1:1 pixel scale so the
-  // hand-drawn detail stays crisp. Tall poses (kick/jump/special) extend
-  // higher due to leg/arm reach.
-  const isTallFrame = frame.type === 'kick' || frame.type === 'jump' || frame.type === 'special';
-  const drawH = isTallFrame ? 170 : 140;
-  const aspect = sprite.canvas.width / sprite.canvas.height;
-  const drawW = drawH * aspect;
+  // Render at source pixel dimensions. The sprite sheet's per-cell body size
+  // is consistent; tight-bbox crops vary in dimensions per pose (kicks extend
+  // forward → wider crop; special includes FX glow → larger overall), but the
+  // body inside is the SAME pixel size in each. Forcing a fixed drawH per
+  // category previously inflated kicks ~21% and let the special FX glow
+  // dictate the whole render size — using native scale preserves consistency.
+  const SPRITE_SCALE = 1.0;
+  const drawW = sprite.canvas.width * SPRITE_SCALE;
+  const drawH = sprite.canvas.height * SPRITE_SCALE;
   const cx = screenX + w / 2;
   const feetY = screenY + h;
   const drawX = cx - drawW / 2;
