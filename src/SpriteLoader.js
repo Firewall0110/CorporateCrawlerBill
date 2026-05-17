@@ -52,6 +52,22 @@ function processSheet(img) {
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
 
+  // FAST PATH: source PNG already has real alpha transparency (e.g. our
+  // procedurally-generated BillSpriteSheet.png). No chroma key needed -
+  // it would eat dark outline pixels by matching the transparent
+  // black (0,0,0,0) edges to character outlines like (26,14,4).
+  let alphaPixelCount = 0;
+  let totalSampled = 0;
+  for (let i = 3; i < data.length; i += 4 * 100) { // sample every 100th pixel for speed
+    totalSampled++;
+    if (data[i] < 200) alphaPixelCount++;
+  }
+  const alreadyTransparent = alphaPixelCount / totalSampled > 0.15;
+  if (alreadyTransparent) {
+    console.log('[SpriteLoader] Source has real alpha - skipping chroma key');
+    return canvas;
+  }
+
   // Sample edge colors to build adaptive background palette
   const edgeColors = [];
   const sampleStride = 2;

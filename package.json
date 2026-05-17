@@ -24,7 +24,8 @@
     "stages:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-stages.js",
     "tickets:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-tickets.js",
     "boss:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-boss.js",
-    "boss-death:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-boss-death.js"
+    "boss-death:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-boss-death.js",
+    "bill:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-bill.js"
   },
   "eslintConfig": {
     "extends": [
