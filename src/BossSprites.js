@@ -18,6 +18,14 @@ const CELL_H = 170;
 const COLS = 8;
 const ROWS = 4;
 
+// Death animation sheet
+const DEATH_SRC = '/sprites/boss-death.png';
+const DEATH_CELL_W = 160;
+const DEATH_CELL_H = 200;
+const DEATH_COLS = 8;
+const DEATH_ROWS = 8;
+const DEATH_TOTAL_FRAMES = DEATH_COLS * DEATH_ROWS; // 64
+
 const ROW_IDLE = 0;
 const ROW_SYSTEM_DOWN = 1;
 const ROW_DATA_CORRUPTION = 2;
@@ -152,5 +160,107 @@ export function pickBossFrame(boss, now) {
   return { sprite: frame };
 }
 
-const BossSpritesModule = { loadBossSprites, getBossSprites, pickBossFrame };
+// ============================================================
+// DEATH ANIMATION (separate sheet)
+// ============================================================
+let _deathFrames = null;
+let _deathLoadPromise = null;
+
+function tightCropDeath(srcCanvas, col, row) {
+  const fw = DEATH_CELL_W;
+  const fh = DEATH_CELL_H;
+  const frame = document.createElement('canvas');
+  frame.width = fw;
+  frame.height = fh;
+  const fctx = frame.getContext('2d');
+  fctx.imageSmoothingEnabled = false;
+  fctx.drawImage(srcCanvas, col * fw, row * fh, fw, fh, 0, 0, fw, fh);
+
+  const data = fctx.getImageData(0, 0, fw, fh).data;
+  let minX = fw, maxX = 0, minY = fh, maxY = 0;
+  for (let y = 0; y < fh; y++) {
+    for (let x = 0; x < fw; x++) {
+      const i = (y * fw + x) * 4 + 3;
+      if (data[i] > 30) {
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+        if (y < minY) minY = y;
+        if (y > maxY) maxY = y;
+      }
+    }
+  }
+  if (maxX <= minX || maxY <= minY) {
+    // Empty frame (late vaporize phase) - just return an empty placeholder
+    return { canvas: frame, width: fw, height: fh, isEmpty: true };
+  }
+
+  const cw = maxX - minX + 1;
+  const ch = maxY - minY + 1;
+  const cropped = document.createElement('canvas');
+  cropped.width = cw;
+  cropped.height = ch;
+  const cctx = cropped.getContext('2d');
+  cctx.imageSmoothingEnabled = false;
+  cctx.drawImage(frame, minX, minY, cw, ch, 0, 0, cw, ch);
+  return { canvas: cropped, width: cw, height: ch, offsetX: minX, offsetY: minY, originalW: fw, originalH: fh };
+}
+
+export function loadBossDeathSprites() {
+  if (_deathFrames) return Promise.resolve(_deathFrames);
+  if (_deathLoadPromise) return _deathLoadPromise;
+
+  _deathLoadPromise = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const work = document.createElement('canvas');
+        work.width = DEATH_COLS * DEATH_CELL_W;
+        work.height = DEATH_ROWS * DEATH_CELL_H;
+        const wctx = work.getContext('2d');
+        wctx.imageSmoothingEnabled = false;
+        wctx.drawImage(img, 0, 0);
+
+        const frames = [];
+        for (let r = 0; r < DEATH_ROWS; r++) {
+          for (let c = 0; c < DEATH_COLS; c++) {
+            frames.push(tightCropDeath(work, c, r));
+          }
+        }
+        _deathFrames = frames;
+        console.log('[BossSprites] Death animation loaded (64 frames)');
+        resolve(_deathFrames);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    img.onerror = () => reject(new Error('boss-death.png failed to load'));
+    img.src = DEATH_SRC;
+  }).catch(err => {
+    _deathLoadPromise = null;
+    _deathFrames = null;
+    throw err;
+  });
+
+  return _deathLoadPromise;
+}
+
+export function getBossDeathSprites() {
+  return _deathFrames;
+}
+
+/**
+ * Pick the death frame based on elapsed time.
+ * deathDuration = 5200ms / 64 frames = 81.25ms per frame
+ */
+export function pickBossDeathFrame(elapsed, duration) {
+  if (!_deathFrames) return null;
+  const t = Math.min(1, elapsed / duration);
+  const frameIdx = Math.min(DEATH_TOTAL_FRAMES - 1, Math.floor(t * DEATH_TOTAL_FRAMES));
+  return _deathFrames[frameIdx];
+}
+
+const BossSpritesModule = {
+  loadBossSprites, getBossSprites, pickBossFrame,
+  loadBossDeathSprites, getBossDeathSprites, pickBossDeathFrame
+};
 export default BossSpritesModule;

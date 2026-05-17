@@ -3,7 +3,7 @@ import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
 import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
 import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
-import { loadBossSprites, getBossSprites, pickBossFrame } from './BossSprites';
+import { loadBossSprites, getBossSprites, pickBossFrame, loadBossDeathSprites, pickBossDeathFrame } from './BossSprites';
 
 // SERVER CONFIG - Use relative URL so it works both locally and on Railway
 const SERVER_URL = window.location.origin;
@@ -535,6 +535,9 @@ const BeatEmUpGame = () => {
     loadBossSprites()
       .then(() => console.log('Boss sprites loaded successfully'))
       .catch(err => console.warn('Boss sprites failed to load, using procedural fallback:', err));
+    loadBossDeathSprites()
+      .then(() => console.log('Boss death cinematic loaded successfully'))
+      .catch(err => console.warn('Boss death cinematic failed to load:', err));
   }, []);
 
   // Load the 4 per-stage backgrounds (one per level)
@@ -919,6 +922,11 @@ const BeatEmUpGame = () => {
       if (now < flashEffectRef.current.until && flashEffectRef.current.color) {
         ctx.fillStyle = flashEffectRef.current.color;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+
+      // Boss death cinematic - dims everything, zooms in, plays 64-frame anim
+      if (gameState.bossDying) {
+        drawBossDeathCinematic(ctx, gameState, now, canvas.width, canvas.height);
       }
 
       // Draw HUD (above shake, never moves)
@@ -2078,6 +2086,116 @@ function lightenColor(hex, amount) {
   const g = Math.min(255, Math.floor(parseInt(c.substring(2, 4), 16) + 255 * amount));
   const b = Math.min(255, Math.floor(parseInt(c.substring(4, 6), 16) + 255 * amount));
   return `rgb(${r},${g},${b})`;
+}
+
+/**
+ * Cinematic boss death overlay - dims the game, centers a large boss death
+ * sprite, plays 64-frame animation over ~5.2 seconds.
+ *
+ * Phases (per server-side timing):
+ *   0-13%   stagger
+ *   13-25%  look up + scream begins
+ *   25-37%  full scream + eye beams
+ *   37-50%  energy vortex
+ *   50-62%  cracking
+ *   62-75%  collapse
+ *   75-87%  vaporize
+ *   87-100% final dispersal
+ */
+function drawBossDeathCinematic(ctx, gameState, now, canvasW, canvasH) {
+  const death = gameState.bossDying;
+  if (!death) return;
+  const elapsed = death.elapsed;
+  const duration = death.duration;
+  const t = Math.min(1, elapsed / duration);
+
+  // Phase progress (0-7)
+  const phase = Math.min(7, Math.floor(t * 8));
+
+  // Dark vignette overlay - intensifies through the cinematic
+  const dimAlpha = 0.5 + t * 0.35;
+  ctx.fillStyle = `rgba(0, 0, 0, ${dimAlpha})`;
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // Radial vignette (darker corners)
+  const grad = ctx.createRadialGradient(canvasW / 2, canvasH / 2, 100,
+                                        canvasW / 2, canvasH / 2, canvasW * 0.7);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(1, 'rgba(0,0,0,0.85)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, canvasW, canvasH);
+
+  // Get death frame
+  const frame = pickBossDeathFrame(elapsed, duration);
+
+  // Centered boss draw position with zoom that increases through the cinematic
+  // Start at 1.6x, ramp up to 2.5x by phase 3, then slowly shrink as dispersing
+  let zoom;
+  if (phase <= 3) zoom = 1.6 + phase * 0.3; // 1.6 -> 2.5
+  else if (phase <= 5) zoom = 2.5 - (phase - 3) * 0.1; // 2.5 -> 2.3
+  else zoom = 2.3 - (phase - 5) * 0.2; // 2.3 -> 1.9
+
+  // Screen-shake during dramatic phases (2-4: scream + cracking)
+  let shakeX = 0, shakeY = 0;
+  if (phase >= 2 && phase <= 4) {
+    const intensity = phase === 3 || phase === 4 ? 6 : 3;
+    shakeX = (Math.random() - 0.5) * intensity * 2;
+    shakeY = (Math.random() - 0.5) * intensity * 2;
+  }
+
+  if (frame && frame.canvas && !frame.isEmpty) {
+    const baseH = 200;
+    const drawH = baseH * zoom;
+    const aspect = frame.canvas.width / frame.canvas.height;
+    const drawW = drawH * aspect;
+
+    // Position centered, slightly above center (toward sky-screaming visual)
+    const cx = canvasW / 2 + shakeX;
+    const cy = canvasH / 2 + 20 + shakeY;
+    const drawX = cx - drawW / 2;
+    const drawY = cy - drawH / 2;
+
+    // Bright glow halo during scream phases
+    if (phase >= 1 && phase <= 4) {
+      const glowAlpha = 0.4 + Math.sin(now / 100) * 0.1;
+      ctx.save();
+      ctx.globalAlpha = glowAlpha;
+      ctx.fillStyle = phase === 2 ? '#ffffff' : phase === 3 ? '#ff00cc' : '#00ddff';
+      ctx.beginPath();
+      ctx.arc(cx, cy, 100 + phase * 30, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Drop shadow for the sprite
+    ctx.save();
+    ctx.shadowColor = phase >= 6 ? '#aaccff' : phase >= 4 ? '#ff66ff' : '#00ddff';
+    ctx.shadowBlur = 20 + phase * 5;
+    ctx.drawImage(frame.canvas, drawX, drawY, drawW, drawH);
+    ctx.restore();
+  }
+
+  // Text overlay at top - matches the cinematic mood
+  ctx.save();
+  ctx.font = 'bold 14px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#000000';
+  ctx.shadowBlur = 8;
+  if (phase <= 1) {
+    ctx.fillStyle = '#ff3344';
+    ctx.fillText('CRITICAL!', canvasW / 2, 70);
+  } else if (phase <= 3) {
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('NO!!!', canvasW / 2, 70);
+  } else if (phase <= 5) {
+    ctx.fillStyle = '#00ddff';
+    ctx.fillText('SYSTEM FAILURE...', canvasW / 2, 70);
+  } else {
+    ctx.fillStyle = '#aaccff';
+    ctx.font = 'bold 16px "Press Start 2P", monospace';
+    ctx.fillText('THE OUTAGE IS RESOLVED', canvasW / 2, 70);
+  }
+  ctx.restore();
 }
 
 /**

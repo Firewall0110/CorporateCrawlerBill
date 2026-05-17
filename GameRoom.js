@@ -49,6 +49,11 @@ class GameRoom {
     this.stageTransition = null; // { startTime: ms, nextStageIndex: int }
     this.STAGE_TRANSITION_DURATION = 2500; // ms
 
+    // Boss death cinematic: when boss dies, we pause game logic and play
+    // the 64-frame death animation before the victory screen appears
+    this.bossDeathStartTime = null; // set when boss first dies
+    this.BOSS_DEATH_DURATION = 5200; // ms - matches 64 frames @ ~12fps
+
     // Track which sections have already been spawned (prevents respawn on backtracking)
     // Key format: "zoneIndex-sectionIndex"
     this.spawnedSections = new Set();
@@ -258,6 +263,23 @@ class GameRoom {
       this.debugUpdateLogged = true;
     }
 
+    // Boss death cinematic: freeze the world, no combat, no movement
+    if (this.bossDeathStartTime) {
+      // Just tick boss death timer above; the boss-death check happens later in the loop.
+      // Keep player animation cooldowns ticking so visuals don't freeze, but skip everything else.
+      this.players.forEach(player => {
+        player.velocityX *= 0.5;
+        player.velocityY = 0;
+        if (player.attackCooldown > 0) player.attackCooldown -= deltaTime;
+      });
+      // Still need to check the boss death trigger
+      if (this.boss && this.boss.isKnockedOut &&
+          Date.now() - this.bossDeathStartTime >= this.BOSS_DEATH_DURATION) {
+        this.levelComplete();
+      }
+      return;
+    }
+
     // Stage transition: players auto-run right off-screen, no combat
     if (this.stageTransition) {
       const runSpeed = 6;
@@ -330,9 +352,21 @@ class GameRoom {
       }
     }
 
-    // Boss defeat
+    // Boss defeat - cinematic death sequence (5.2 seconds)
     if (this.boss && this.boss.isKnockedOut) {
-      this.levelComplete();
+      if (!this.bossDeathStartTime) {
+        // First frame the boss dies - kick off the cinematic
+        this.bossDeathStartTime = Date.now();
+        this.io.to(this.id).emit('bossDying', {
+          startTime: this.bossDeathStartTime,
+          duration: this.BOSS_DEATH_DURATION
+        });
+        debugLog(`[Boss] Death cinematic started`);
+      }
+      // After cinematic duration, trigger level complete
+      if (Date.now() - this.bossDeathStartTime >= this.BOSS_DEATH_DURATION) {
+        this.levelComplete();
+      }
     }
 
     // Level progression
@@ -880,8 +914,8 @@ class GameRoom {
    * Handle player input
    */
   handlePlayerInput(socketId, input) {
-    // Ignore input during stage transitions (server auto-controls player)
-    if (this.stageTransition) return;
+    // Ignore input during stage transitions or boss death cinematic
+    if (this.stageTransition || this.bossDeathStartTime) return;
     const player = this.players.get(socketId);
     if (player) {
       player.handleInput(input, this.groundLevel, this.playAreaTop);
@@ -892,7 +926,7 @@ class GameRoom {
    * Handle player attack
    */
   handlePlayerAttack(socketId, attackType) {
-    if (this.stageTransition) return;
+    if (this.stageTransition || this.bossDeathStartTime) return;
     const player = this.players.get(socketId);
     if (player) {
       player.performAttack(attackType);
@@ -976,6 +1010,10 @@ class GameRoom {
         duration: this.STAGE_TRANSITION_DURATION,
         fromStageIndex: this.stageTransition.fromStageIndex,
         nextStageIndex: this.stageTransition.nextStageIndex
+      } : null,
+      bossDying: this.bossDeathStartTime ? {
+        elapsed: Date.now() - this.bossDeathStartTime,
+        duration: this.BOSS_DEATH_DURATION
       } : null,
       maxRightBound: this.maxRightBound,
       sectionClear: this.sectionWavesClear,
