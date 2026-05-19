@@ -2151,17 +2151,25 @@ function drawElevatorBank(ctx, x, y) {
 const STAGES = [
   { name: 'stage1.png', label: 'Garage', width: 2500, render: renderGarageStage },
   { name: 'stage2.png', label: 'Quad', width: 2500, render: renderQuadStage },
-  { name: 'stage3.png', label: 'Lobby', width: 2500, render: renderLobbyStage },
+  // stage3.png is now a hand-curated photoreal render placed manually into
+  // public/sprites/. Keep the renderer here for reference but skip writing
+  // so this script doesn't clobber it.
+  { name: 'stage3.png', label: 'Lobby', width: 2500, render: renderLobbyStage, skip: true },
   { name: 'stage4.png', label: 'Server Room', width: 1500, render: renderServerRoomStage }
 ];
 
-console.log('Generating 4 stage PNGs...');
+console.log('Generating stage PNGs...');
 
 const outDir = path.join(__dirname, '..', 'public', 'sprites');
 if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
 
 let totalSize = 0;
+let written = 0;
 STAGES.forEach(stage => {
+  if (stage.skip) {
+    console.log(`  ${stage.label} (${stage.name}) - SKIPPED (manually curated)`);
+    return;
+  }
   console.log(`  ${stage.label} (${stage.width}x${HEIGHT})...`);
   rseed(stage.name.charCodeAt(5) * 1000);
   const canvas = stage.render(stage.width);
@@ -2169,8 +2177,9 @@ STAGES.forEach(stage => {
   const outPath = path.join(outDir, stage.name);
   fs.writeFileSync(outPath, buffer);
   totalSize += buffer.length;
+  written++;
   console.log(`    saved ${stage.name} (${(buffer.length / 1024).toFixed(1)} KB)`);
 });
 
-console.log(`\n✓ All ${STAGES.length} stages generated`);
+console.log(`\n✓ ${written} stage(s) generated`);
 console.log(`  Total size: ${(totalSize / 1024).toFixed(1)} KB`);

@@ -867,14 +867,20 @@ const BeatEmUpGame = () => {
       ctx.translate(shakeX, shakeY);
 
       // Draw stage: pick the image for the current stage index
+      // Stage images may be high-res (e.g. 3904x1088); scale to fit canvas
+      // height while preserving aspect ratio, then offset by cameraX so the
+      // image scrolls with the world. Any image source resolution works
+      // because we never assume a 1:1 mapping between PNG px and world px.
       const stageIdx = gameState.currentStageIndex ?? gameState.currentZoneIndex ?? 0;
       const stageImg = stageImagesRef.current[stageIdx];
       if (stageImg && stageImg.complete && stageImg.naturalWidth > 0) {
-        ctx.drawImage(stageImg, -cameraX, 0);
-        if (stageImg.naturalWidth < gameState.worldWidth) {
+        const scale = CANVAS_HEIGHT / stageImg.naturalHeight;
+        const drawW = stageImg.naturalWidth * scale;
+        const drawH = CANVAS_HEIGHT;
+        ctx.drawImage(stageImg, -cameraX, 0, drawW, drawH);
+        if (drawW < gameState.worldWidth) {
           ctx.fillStyle = '#1a1a2a';
-          ctx.fillRect(stageImg.naturalWidth - cameraX, 0,
-            gameState.worldWidth - stageImg.naturalWidth, stageImg.naturalHeight);
+          ctx.fillRect(drawW - cameraX, 0, gameState.worldWidth - drawW, drawH);
         }
       } else {
         drawParallaxBackground(

@@ -28,8 +28,13 @@ class GameRoom {
     // Each stage starts at x=0 and has its own worldWidth (2500 for stages 0-2, 1500 for boss)
     this.worldHeight = 800; // Doubled height for vertical movement
     this.gravity = 0.8;
-    this.groundLevel = 600; // Front of play area (closest to viewer)
-    this.playAreaTop = 380; // Back of play area (depth) - units can walk here
+    // Default floor bounds (overridden per-stage via zoneConfig.floor)
+    // groundLevel: front of play area (closest to viewer)
+    // playAreaTop: back of play area (depth) - units can walk between these Y values
+    this.DEFAULT_GROUND_LEVEL = 600;
+    this.DEFAULT_PLAY_AREA_TOP = 380;
+    this.groundLevel = this.DEFAULT_GROUND_LEVEL;
+    this.playAreaTop = this.DEFAULT_PLAY_AREA_TOP;
 
     // Game loop
     this.tickRate = 1000 / 60; // 60 FPS
@@ -42,6 +47,8 @@ class GameRoom {
     this.sectionWavesClear = false;
     this.sectionWavesSpawned = false;
     this.worldWidth = this.zoneConfig[0].width; // Current stage's width
+    // Apply initial zone floor (uses defaults unless zone declares an override)
+    this.applyZoneFloor(this.zoneConfig[0]);
     this.maxRightBound = 300; // Player can't move beyond this X until section is clear
 
     // Stage transition state - when player completes a stage, they auto-exit
@@ -150,6 +157,11 @@ class GameRoom {
       {
         name: 'Lobby',
         width: 2500,
+        // The Lobby stage uses a high-res rendered backdrop where the
+        // polished marble floor only occupies the bottom ~28% of the image.
+        // Push the walkable Y band down so characters stand on the floor
+        // and don't walk through the floor-to-ceiling glass wall.
+        floor: { playAreaTop: 510, groundLevel: 670 },
         sections: [
           {
             name: 'Lobby - Section 1',
@@ -187,6 +199,20 @@ class GameRoom {
         ]
       }
     ];
+  }
+
+  /**
+   * Apply per-stage walkable floor bounds. Each zone may declare a `floor`
+   * override with { playAreaTop, groundLevel } to match the floor location
+   * in its backdrop image. Stages without an override use the defaults.
+   * Called on the initial stage and whenever a stage transition completes.
+   */
+  applyZoneFloor(zone) {
+    const f = zone && zone.floor;
+    this.playAreaTop = (f && typeof f.playAreaTop === 'number')
+      ? f.playAreaTop : this.DEFAULT_PLAY_AREA_TOP;
+    this.groundLevel = (f && typeof f.groundLevel === 'number')
+      ? f.groundLevel : this.DEFAULT_GROUND_LEVEL;
   }
 
   /**
@@ -543,6 +569,8 @@ class GameRoom {
 
     // Each stage is its own independent world
     this.worldWidth = nextStage.width;
+    // Apply per-stage floor bounds (e.g. Lobby has a higher floor band)
+    this.applyZoneFloor(nextStage);
 
     // Reset player positions to left side of new stage
     const midDepth = (this.playAreaTop + this.groundLevel) / 2 + 40;
