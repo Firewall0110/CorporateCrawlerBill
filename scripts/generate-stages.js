@@ -718,132 +718,366 @@ function drawOilStain(ctx, x, y, dir) {
 }
 
 // ============================================================
-// STAGE 2: QUAD - tech campus park, bright day (reuse existing approach)
+// STAGE 2: QUAD - ExxonMobil Spring TX-style corporate campus
+// Limestone-and-glass low-rise buildings under a Texas sky, with the
+// Energy Center's cantilevered upper block as the central focal point.
 // ============================================================
 function renderQuadStage(W) {
   const canvas = createCanvas(W, HEIGHT);
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
+  // Sky - bright Texas day
   ditheredGradientStops(ctx, 0, 0, W, PLAY_AREA_TOP, [
-    { t: 0, c: '#3a7ac8' }, { t: 0.4, c: '#6aaee0' },
-    { t: 0.85, c: '#a8cce8' }, { t: 1.0, c: '#d4e4ec' }
+    { t: 0, c: '#5a96d4' }, { t: 0.5, c: '#a0c8e8' },
+    { t: 0.9, c: '#dde9f0' }, { t: 1.0, c: '#e8eef0' }
   ]);
 
-  // Sun
-  ctx.fillStyle = 'rgba(255,250,200,0.9)';
-  ctx.beginPath(); ctx.arc(200, 80, 30, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.beginPath(); ctx.arc(200, 80, 14, 0, Math.PI * 2); ctx.fill();
+  // Sun (high, soft - bright midday)
+  ctx.fillStyle = 'rgba(255,250,210,0.7)';
+  ctx.beginPath(); ctx.arc(W * 0.18, 60, 38, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,240,0.95)';
+  ctx.beginPath(); ctx.arc(W * 0.18, 60, 20, 0, Math.PI * 2); ctx.fill();
 
-  // Mountains
+  // Distant flat horizon line of trees (Houston is flat - no mountains)
   rseed(202);
-  ctx.fillStyle = 'rgba(80,100,140,0.4)';
-  let mx = 0;
-  while (mx < W) {
-    const mh = 20 + Math.floor(srand() * 30);
-    const mw = 80 + Math.floor(srand() * 60);
-    ctx.beginPath();
-    ctx.moveTo(mx, 180); ctx.lineTo(mx + mw / 2, 180 - mh); ctx.lineTo(mx + mw, 180); ctx.closePath();
-    ctx.fill();
-    mx += mw - 20;
+  for (let tx = 0; tx < W; tx += 3) {
+    const th = 8 + Math.floor(srand() * 14);
+    ctx.fillStyle = 'rgba(70,100,80,0.5)';
+    ctx.fillRect(tx, 230 - th, 3, th + 6);
   }
+  ctx.fillStyle = 'rgba(70,100,80,0.3)';
+  ctx.fillRect(0, 232, W, 4);
 
-  // Clouds
+  // Soft Texas cumulus clouds (sparse)
   rseed(303);
-  for (let i = 0; i < 8; i++) {
-    drawFluffyCloud(ctx, 50 + i * 280 + srand() * 80, 50 + srand() * 80);
-  }
+  drawFluffyCloud(ctx, 380, 60);
+  drawFluffyCloud(ctx, 1180, 45);
+  drawFluffyCloud(ctx, 1740, 75);
+  drawFluffyCloud(ctx, 2300, 55);
 
-  // Tech buildings backdrop
-  rseed(404);
-  let bx = 0;
-  while (bx < W) {
-    const bw = 100 + Math.floor(srand() * 50);
-    const bh = 200 + Math.floor(srand() * 90);
-    drawTechBuilding(ctx, bx, PLAY_AREA_TOP - bh - 26, bw, bh);
-    bx += bw + 4;
-  }
+  // === THREE CAMPUS BUILDINGS ===
+  // Hand-placed for compositional balance - left office, center Energy
+  // Center cantilever (focal point), right wellness pavilion.
 
-  // TECHCORP sign on a prominent building
-  ctx.fillStyle = '#0a4a8a';
-  ctx.fillRect(W / 2 - 70, 140, 140, 28);
-  ctx.fillStyle = '#1a6abc';
-  ctx.fillRect(W / 2 - 70, 140, 140, 4);
-  drawPixelText(ctx, 'TECHCORP', W / 2, 152, '#ffffff', 'center');
+  // Left: long horizontal office block with deep louvers
+  drawCampusOffice(ctx, 60, PLAY_AREA_TOP - 200, 540, 180, 5);
 
-  // Hedge band along back
-  ditheredGradientStops(ctx, 0, PLAY_AREA_TOP - 26, W, 26, [
-    { t: 0, c: '#3a6a3a' }, { t: 1, c: '#5a8a5a' }
+  // Center: ENERGY CENTER with cantilevered upper floors (focal point)
+  // Sits forward visually, slightly taller, dominates the skyline.
+  drawEnergyCenter(ctx, W * 0.5 - 470, PLAY_AREA_TOP - 246, 940, 226);
+
+  // Right: lower glass wellness/dining pavilion
+  drawCampusPavilion(ctx, W - 600, PLAY_AREA_TOP - 154, 540, 134);
+
+  // Hedge band along back (softer, slightly darker for depth)
+  ditheredGradientStops(ctx, 0, PLAY_AREA_TOP - 22, W, 22, [
+    { t: 0, c: '#2e5a30' }, { t: 1, c: '#4a7a4a' }
   ]);
   rseed(505);
   for (let i = 0; i < W; i += 4) {
-    ctx.fillStyle = srand() > 0.5 ? '#4a7a4a' : '#2a5a2a';
-    ctx.fillRect(i, PLAY_AREA_TOP - 24, 2, 2);
+    ctx.fillStyle = srand() > 0.5 ? '#3e6a3e' : '#244a24';
+    ctx.fillRect(i, PLAY_AREA_TOP - 20, 2, 2);
   }
 
-  // Grass floor
+  // Lawn floor (signature campus green)
   ditheredGradientStops(ctx, 0, PLAY_AREA_TOP, W, HEIGHT - PLAY_AREA_TOP, [
-    { t: 0, c: '#4a8a4a' }, { t: 0.3, c: '#5aa05a' },
-    { t: 0.7, c: '#3a7a3a' }, { t: 1, c: '#2a6a2a' }
+    { t: 0, c: '#5a9a5a' }, { t: 0.3, c: '#6ab06a' },
+    { t: 0.7, c: '#4a8a4a' }, { t: 1, c: '#356a35' }
   ]);
-  // Grass blades
   rseed(606);
   for (let i = 0; i < 800; i++) {
     const gx = Math.floor(srand() * W);
     const gy = PLAY_AREA_TOP + Math.floor(srand() * (HEIGHT - PLAY_AREA_TOP));
-    ctx.fillStyle = srand() > 0.5 ? '#6abc6a' : '#3a6a3a';
+    ctx.fillStyle = srand() > 0.5 ? '#7acc7a' : '#3a6a3a';
     ctx.fillRect(gx, gy, 1, 2);
   }
 
-  // Cobblestone path winding through
+  // Cream brick walkway (subtle curve through campus)
   for (let px2 = 0; px2 < W; px2 += 1) {
     const t = px2 / W;
     const pathY = PLAY_AREA_TOP + 130 + Math.sin(t * Math.PI * 3) * 12;
-    ctx.fillStyle = '#c8b898';
+    ctx.fillStyle = '#d4c8a8';
     ctx.fillRect(px2, pathY, 1, 40);
-    ctx.fillStyle = '#9a8a7a';
+    ctx.fillStyle = '#a89878';
     ctx.fillRect(px2, pathY, 1, 2);
     ctx.fillRect(px2, pathY + 38, 1, 2);
   }
+  // Brick joint pattern on the path
+  rseed(707);
+  for (let px2 = 0; px2 < W; px2 += 12) {
+    const t = px2 / W;
+    const pathY = PLAY_AREA_TOP + 130 + Math.sin(t * Math.PI * 3) * 12;
+    ctx.fillStyle = 'rgba(140,120,90,0.4)';
+    ctx.fillRect(px2, pathY + 8 + (px2 % 24 === 0 ? 12 : 0), 1, 4);
+  }
 
-  // Fountain in center
-  drawFountain(ctx, W / 2 - 60, PLAY_AREA_TOP + 60);
+  // Reflecting pool front-center (replaces fountain - more campus-realistic)
+  drawReflectingPool(ctx, W / 2 - 100, PLAY_AREA_TOP + 60, 200, 40);
 
-  // Statue
-  drawStatue(ctx, W * 0.2, PLAY_AREA_TOP + 50);
+  // Modern sculpture (kept - campuses have public art)
+  drawStatue(ctx, W * 0.22, PLAY_AREA_TOP + 50);
 
-  // Trees
+  // Live oaks (signature ExxonMobil campus tree)
   drawOakTree(ctx, 80, PLAY_AREA_TOP - 60);
-  drawOakTree(ctx, 480, PLAY_AREA_TOP - 30);
-  drawOakTree(ctx, 1300, PLAY_AREA_TOP - 50);
-  drawOakTree(ctx, 1900, PLAY_AREA_TOP - 70);
-  drawOakTree(ctx, 2240, PLAY_AREA_TOP - 40);
+  drawOakTree(ctx, 660, PLAY_AREA_TOP - 30);
+  drawOakTree(ctx, 1860, PLAY_AREA_TOP - 50);
+  drawOakTree(ctx, 2280, PLAY_AREA_TOP - 40);
 
-  drawPalmTree(ctx, 240, PLAY_AREA_TOP - 40);
-  drawPalmTree(ctx, 1600, PLAY_AREA_TOP - 35);
-  drawPalmTree(ctx, 2100, PLAY_AREA_TOP - 50);
+  // A couple of palms for Texas flavor
+  drawPalmTree(ctx, 1620, PLAY_AREA_TOP - 35);
 
-  // Benches
+  // Benches around the pool
   drawFancyBench(ctx, W / 2 - 200, PLAY_AREA_TOP + 130);
   drawFancyBench(ctx, W / 2 + 130, PLAY_AREA_TOP + 130);
-  drawFancyBench(ctx, W * 0.2 - 80, PLAY_AREA_TOP + 110);
-  drawFancyBench(ctx, 1860, PLAY_AREA_TOP + 110);
 
-  // Flower beds
-  drawFlowerBed(ctx, 320, PLAY_AREA_TOP + 180, '#ff66cc');
-  drawFlowerBed(ctx, 880, PLAY_AREA_TOP + 200, '#ffdd33');
-  drawFlowerBed(ctx, 1450, PLAY_AREA_TOP + 180, '#ee5544');
-  drawFlowerBed(ctx, 2080, PLAY_AREA_TOP + 190, '#ff66cc');
-
-  // Coffee cart
-  drawCoffeeCart(ctx, 1700, PLAY_AREA_TOP + 60);
+  // Sparse flower beds (campus is minimalist)
+  drawFlowerBed(ctx, 380, PLAY_AREA_TOP + 190, '#ff66cc');
+  drawFlowerBed(ctx, 2100, PLAY_AREA_TOP + 190, '#ffdd33');
 
   // Floor edge highlight
   ctx.fillStyle = 'rgba(255,255,255,0.15)';
   ctx.fillRect(0, PLAY_AREA_TOP, W, 1);
 
   return canvas;
+}
+
+// Limestone-and-glass office block - ExxonMobil campus style.
+// Deep horizontal louver bands cast strong shadows beneath each floor.
+function drawCampusOffice(ctx, x, y, w, h, floors) {
+  floors = floors || 5;
+  const podiumH = Math.floor(h * 0.16);
+  const bodyH = h - podiumH;
+
+  // Stone podium / ground floor base
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(x, y + bodyH, w, podiumH);
+  ctx.fillStyle = '#b0a387';
+  ctx.fillRect(x, y + bodyH, w, 2);
+  // Ground-floor recessed glass
+  ctx.fillStyle = '#5a7a96';
+  ctx.fillRect(x + 8, y + bodyH + 4, w - 16, podiumH - 8);
+  ctx.fillStyle = '#3a4250';
+  for (let mx = x + 14; mx < x + w - 8; mx += 10) {
+    ctx.fillRect(mx, y + bodyH + 4, 1, podiumH - 8);
+  }
+
+  // Body limestone wash behind the glass
+  ctx.fillStyle = '#d4c8ad';
+  ctx.fillRect(x, y, w, bodyH);
+
+  // End stone piers (bookend columns)
+  const pier = Math.max(10, Math.floor(w * 0.05));
+  ctx.fillStyle = '#c0b39a';
+  ctx.fillRect(x, y, pier, bodyH);
+  ctx.fillRect(x + w - pier, y, pier, bodyH);
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x + pier - 2, y, 2, bodyH);
+  ctx.fillRect(x + w - pier, y, 2, bodyH);
+
+  // Glass curtain wall between piers
+  const gX = x + pier;
+  const gW = w - pier * 2;
+  const floorH = Math.floor(bodyH / floors);
+  for (let f = 0; f < floors; f++) {
+    const fy = y + f * floorH;
+    // Glass band (alternates slightly to suggest reflections)
+    ctx.fillStyle = f % 2 === 0 ? '#6f93b0' : '#7ba0bd';
+    ctx.fillRect(gX, fy + 2, gW, floorH - 6);
+    // Vertical mullions
+    ctx.fillStyle = '#2e3744';
+    for (let mx = gX + 8; mx < gX + gW; mx += 12) {
+      ctx.fillRect(mx, fy + 2, 1, floorH - 6);
+    }
+    // Subtle horizontal reflective line in each floor
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(gX, fy + Math.floor(floorH / 2), gW, 1);
+    // Horizontal sun-shade band + shadow
+    ctx.fillStyle = '#c0b39a';
+    ctx.fillRect(gX - 2, fy + floorH - 4, gW + 4, 3);
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillRect(gX, fy + floorH - 1, gW, 1);
+  }
+
+  // Top parapet
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x, y, w, 2);
+  ctx.fillStyle = '#e0d4ba';
+  ctx.fillRect(x, y, w, 1);
+}
+
+// ExxonMobil Energy Center - cantilevered upper block projecting beyond
+// the recessed ground-floor lobby, supported by paired columns at each end.
+// This is the campus's signature architectural moment.
+function drawEnergyCenter(ctx, x, y, w, h) {
+  const upperH = Math.floor(h * 0.78); // upper mass is most of the height
+  const groundH = h - upperH;
+  const overhang = Math.floor(w * 0.17); // how far the upper block projects past the lobby
+  const lobbyX = x + overhang;
+  const lobbyW = w - overhang * 2;
+
+  // === GROUND-FLOOR LOBBY (recessed under the cantilever) ===
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(lobbyX, y + upperH, lobbyW, groundH);
+  // Lobby glass (taller, expansive entry)
+  ctx.fillStyle = '#7aa0c0';
+  ctx.fillRect(lobbyX + 4, y + upperH + 3, lobbyW - 8, groundH - 10);
+  // Lobby mullions
+  ctx.fillStyle = '#2e3744';
+  for (let mx = lobbyX + 10; mx < lobbyX + lobbyW - 4; mx += 14) {
+    ctx.fillRect(mx, y + upperH + 3, 1, groundH - 10);
+  }
+  // Entry door (slightly taller dark slot)
+  ctx.fillStyle = '#1a2230';
+  ctx.fillRect(lobbyX + lobbyW / 2 - 10, y + upperH + 8, 20, groundH - 14);
+  // Lobby base trim
+  ctx.fillStyle = '#5a4a3a';
+  ctx.fillRect(lobbyX, y + h - 5, lobbyW, 3);
+
+  // === SUPPORT COLUMNS (under each side of the cantilever) ===
+  // Two paired columns left, two paired right.
+  const colY = y + upperH;
+  const colH = groundH - 3;
+  function pillar(cx) {
+    ctx.fillStyle = '#aa9d80';
+    ctx.fillRect(cx, colY, 9, colH);
+    ctx.fillStyle = '#c5b89c';
+    ctx.fillRect(cx, colY, 9, 2); // capital highlight
+    ctx.fillStyle = '#8a7d66';
+    ctx.fillRect(cx + 7, colY + 2, 2, colH - 2); // right side shadow
+    ctx.fillStyle = '#5a4a3a';
+    ctx.fillRect(cx, colY + colH - 2, 9, 2); // base
+  }
+  pillar(x + 18);
+  pillar(x + 18 + Math.floor((overhang - 36) / 2) + 14);
+  pillar(x + w - 27 - Math.floor((overhang - 36) / 2) - 14);
+  pillar(x + w - 27);
+
+  // === DEEP SHADOW UNDER THE CANTILEVER ===
+  // Sells the projection - a strong horizontal shadow beneath the upper mass.
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(x, y + upperH, w, 3);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(x, y + upperH + 3, w, 2);
+
+  // === UPPER BLOCK (the cantilever itself) ===
+  // Limestone background, central glass curtain wall, deep horizontal louvers.
+  ctx.fillStyle = '#d8ccb0';
+  ctx.fillRect(x, y, w, upperH);
+
+  // Side limestone piers (frame the glass)
+  const pier = 18;
+  ctx.fillStyle = '#c0b39a';
+  ctx.fillRect(x, y, pier, upperH);
+  ctx.fillRect(x + w - pier, y, pier, upperH);
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x + pier - 2, y, 2, upperH);
+  ctx.fillRect(x + w - pier, y, 2, upperH);
+
+  // Center glass curtain wall (the cantilever's signature stripe)
+  const gX = x + pier;
+  const gW = w - pier * 2;
+  const floors = 4;
+  const floorH = Math.floor((upperH - 6) / floors);
+  for (let f = 0; f < floors; f++) {
+    const fy = y + 4 + f * floorH;
+    // Glass
+    ctx.fillStyle = f % 2 === 0 ? '#7aa0c0' : '#88adcc';
+    ctx.fillRect(gX, fy + 1, gW, floorH - 4);
+    // Vertical mullions
+    ctx.fillStyle = '#2e3744';
+    for (let mx = gX + 10; mx < gX + gW; mx += 14) {
+      ctx.fillRect(mx, fy + 1, 1, floorH - 4);
+    }
+    // Horizontal reflective highlight
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.fillRect(gX, fy + Math.floor(floorH / 2), gW, 1);
+    // Sun-shade band + shadow below each floor (the signature horizontal expression)
+    ctx.fillStyle = '#c5b89c';
+    ctx.fillRect(gX - 2, fy + floorH - 4, gW + 4, 3);
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillRect(gX, fy + floorH - 1, gW, 1);
+  }
+
+  // Underside of the cantilever (stone soffit)
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x, y + upperH - 3, w, 3);
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(x, y + upperH, w, 1);
+
+  // Top parapet
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x, y, w, 2);
+  ctx.fillStyle = '#e0d4ba';
+  ctx.fillRect(x, y, w, 1);
+
+  // Subtle vertical edge shadows where the cantilever ends (sells the overhang)
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(x + overhang - 1, y + upperH, 1, 8);
+  ctx.fillRect(x + w - overhang, y + upperH, 1, 8);
+}
+
+// Wellness / dining pavilion - low single-volume glass building
+// with a deep stone eave projecting out over the entrance.
+function drawCampusPavilion(ctx, x, y, w, h) {
+  // Stone base
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(x, y + h - 12, w, 12);
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x, y + h - 12, w, 2);
+
+  // Glass curtain wall
+  ctx.fillStyle = '#7aa0c0';
+  ctx.fillRect(x + 4, y + 8, w - 8, h - 22);
+
+  // Vertical mullions
+  ctx.fillStyle = '#2e3744';
+  for (let mx = x + 12; mx < x + w - 4; mx += 16) {
+    ctx.fillRect(mx, y + 8, 1, h - 22);
+  }
+  // Two horizontal reflection bands
+  for (let r = 1; r <= 2; r++) {
+    ctx.fillStyle = 'rgba(255,255,255,0.10)';
+    ctx.fillRect(x + 4, y + 8 + r * Math.floor((h - 22) / 3), w - 8, 1);
+  }
+  // Center entry door
+  ctx.fillStyle = '#1a2230';
+  ctx.fillRect(x + w / 2 - 8, y + h - 28, 16, 16);
+
+  // Deep stone eave (projects beyond facade)
+  ctx.fillStyle = '#c5b89c';
+  ctx.fillRect(x - 6, y, w + 12, 6);
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.fillRect(x - 6, y + 6, w + 12, 2);
+  ctx.fillStyle = '#e0d4ba';
+  ctx.fillRect(x - 6, y, w + 12, 1);
+}
+
+// Rectangular reflecting pool - replaces the fountain for a more
+// campus-quad-realistic look.
+function drawReflectingPool(ctx, x, y, w, h) {
+  // Stone curb
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(x - 3, y - 3, w + 6, h + 6);
+  ctx.fillStyle = '#c0b39a';
+  ctx.fillRect(x - 3, y - 3, w + 6, 2);
+  // Water (gradient deeper toward center)
+  ctx.fillStyle = '#3a6a8a';
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = '#4a7898';
+  ctx.fillRect(x + 2, y + 2, w - 4, h - 4);
+  ctx.fillStyle = '#5a8aac';
+  ctx.fillRect(x + 6, y + 6, w - 12, h - 12);
+  // Reflection highlights
+  for (let i = 0; i < 6; i++) {
+    const rx = x + 8 + Math.floor(((i * 31) % (w - 16)));
+    const ry = y + 6 + Math.floor(((i * 17) % (h - 12)));
+    ctx.fillStyle = 'rgba(255,255,255,0.45)';
+    ctx.fillRect(rx, ry, 8, 1);
+  }
+  // Stone curb shadow on lawn
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  ctx.fillRect(x - 1, y + h + 3, w + 2, 2);
 }
 
 function drawFluffyCloud(ctx, x, y) {
