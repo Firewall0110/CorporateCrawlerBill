@@ -66,6 +66,31 @@ function ditheredGradientStops(ctx, x, y, w, h, stops) {
   ctx.putImageData(img, x, y);
 }
 
+// Smooth (non-dithered) gradient. Higher color fidelity for "32-bit" feel.
+// Use this where the retro pixel-banding hurts realism (skies, atmospheric
+// haze, reflections). Keep ditheredGradientStops for textured surfaces.
+function smoothGradientStops(ctx, x, y, w, h, stops) {
+  const img = ctx.getImageData(x, y, w, h);
+  const data = img.data;
+  const parsed = stops.map(s => ({ t: s.t, c: parseHex(s.c) }));
+  for (let py = 0; py < h; py++) {
+    const tn = py / Math.max(1, h - 1);
+    let lo = parsed[0], hi = parsed[parsed.length - 1];
+    for (let i = 0; i < parsed.length - 1; i++) {
+      if (tn >= parsed[i].t && tn <= parsed[i + 1].t) { lo = parsed[i]; hi = parsed[i + 1]; break; }
+    }
+    const bandT = (tn - lo.t) / Math.max(0.0001, hi.t - lo.t);
+    const r = Math.round(lo.c[0] + (hi.c[0] - lo.c[0]) * bandT);
+    const g = Math.round(lo.c[1] + (hi.c[1] - lo.c[1]) * bandT);
+    const b = Math.round(lo.c[2] + (hi.c[2] - lo.c[2]) * bandT);
+    for (let px = 0; px < w; px++) {
+      const i = (py * w + px) * 4;
+      data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, x, y);
+}
+
 // ============================================================
 // STAGE 1: GARAGE - high-detail Streets-of-Rage-style urban
 // ============================================================
@@ -1229,106 +1254,718 @@ function renderLobbyStage(W) {
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
 
-  ditheredGradientStops(ctx, 0, 0, W, 130, [
-    { t: 0, c: '#9a9aa8' }, { t: 1, c: '#bcbcc8' }
+  // === LAYOUT (vertical bands) ===
+  const CEILING_H = 122;
+  const HEADER_H = 8;             // dark window header (top of glass wall)
+  const WINDOW_TOP = CEILING_H + HEADER_H;          // 130
+  const WINDOW_BOTTOM = PLAY_AREA_TOP - 10;         // 370
+  const WINDOW_H = WINDOW_BOTTOM - WINDOW_TOP;      // 240
+
+  // =====================================================================
+  // BACKGROUND: SUNSET SKY visible through the floor-to-ceiling glass wall
+  // =====================================================================
+  // 32-bit smooth gradient — multi-stop, no dither banding, to capture the
+  // soft purple-to-peach sunset palette from the reference photo.
+  smoothGradientStops(ctx, 0, WINDOW_TOP, W, WINDOW_H, [
+    { t: 0.00, c: '#2a2050' }, // deep zenith purple
+    { t: 0.15, c: '#3e2c6a' },
+    { t: 0.32, c: '#6a3a7a' }, // violet
+    { t: 0.50, c: '#a8506a' }, // mauve
+    { t: 0.68, c: '#d8704a' }, // coral
+    { t: 0.84, c: '#f0a060' }, // sunset orange
+    { t: 0.95, c: '#f8c890' }, // pale peach
+    { t: 1.00, c: '#fce0b0' }  // horizon gold
   ]);
-  // Ceiling grid
-  ctx.fillStyle = '#7a7a88';
-  for (let cy = 30; cy < 130; cy += 30) ctx.fillRect(0, cy, W, 1);
-  for (let cx = 0; cx < W; cx += 50) ctx.fillRect(cx, 0, 1, 130);
-  // Recessed lights
-  for (let lx = 60; lx < W - 60; lx += 200) {
-    ctx.fillStyle = '#fffce0';
-    ctx.fillRect(lx, 20, 30, 8);
-    ctx.save(); ctx.globalAlpha = 0.2;
-    ctx.fillStyle = '#fff388';
-    ctx.fillRect(lx - 10, 28, 50, 60);
-    ctx.restore();
+
+  // Wispy sunset clouds — lit warmly on the underside, cooler above
+  rseed(1212);
+  for (let i = 0; i < 9; i++) {
+    drawSunsetCloud(ctx, 60 + i * (W / 8) + (srand() - 0.5) * 200,
+                         WINDOW_TOP + 30 + srand() * 70);
   }
 
-  // Wall
-  ditheredGradientStops(ctx, 0, 130, W, 250, [
-    { t: 0, c: '#d8c8a8' }, { t: 0.5, c: '#c8b898' }, { t: 1, c: '#b8a888' }
+  // The cantilever bridge scene (silhouetted buildings + bridge + plaza)
+  drawCantileverScene(ctx, 0, WINDOW_TOP, W, WINDOW_H);
+
+  // =====================================================================
+  // LOBBY INTERIOR: CEILING
+  // =====================================================================
+  smoothGradientStops(ctx, 0, 0, W, CEILING_H, [
+    { t: 0, c: '#5a5a6c' }, { t: 1, c: '#86869a' }
   ]);
-
-  // Glass windows showing city
-  for (let i = 0; i < Math.floor(W / 280) + 1; i++) {
-    drawLobbyWindow(ctx, 60 + i * 280, 150, 220, 180);
+  // Ceiling tile grid
+  ctx.fillStyle = 'rgba(40,40,55,0.45)';
+  for (let cy = 28; cy < CEILING_H; cy += 30) ctx.fillRect(0, cy, W, 1);
+  for (let cx = 0; cx < W; cx += 48) ctx.fillRect(cx, 0, 1, CEILING_H);
+  // HVAC slot at top (subtle)
+  ctx.fillStyle = '#3a3a48';
+  ctx.fillRect(0, 0, W, 4);
+  ctx.fillStyle = '#1a1a24';
+  ctx.fillRect(0, 4, W, 2);
+  // Recessed downlights with soft bloom
+  for (let lx = 70; lx < W - 60; lx += 220) {
+    // Fixture body
+    ctx.fillStyle = '#2a2a34'; ctx.fillRect(lx - 2, 30, 36, 14);
+    ctx.fillStyle = '#fffce0'; ctx.fillRect(lx, 32, 32, 10);
+    ctx.fillStyle = '#ffffff'; ctx.fillRect(lx + 6, 34, 20, 4);
+    // Down-bloom
+    for (let g = 1; g <= 4; g++) {
+      ctx.save();
+      ctx.globalAlpha = 0.06 * (5 - g);
+      ctx.fillStyle = '#fff388';
+      const gw = 46 + g * 16;
+      ctx.fillRect(lx + 16 - gw / 2, 44 + (g - 1) * 16, gw, 16);
+      ctx.restore();
+    }
   }
+  // Warm cove light along ceiling/window header (sunset bouncing back in)
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  smoothGradientStops(ctx, 0, CEILING_H - 6, W, 6, [
+    { t: 0, c: '#3a3a48' }, { t: 1, c: '#ffc888' }
+  ]);
+  ctx.restore();
 
-  // Company logo center
-  ctx.fillStyle = '#888a92';
-  ctx.fillRect(W / 2 - 100, 160, 200, 40);
-  ctx.fillStyle = '#aaacb4';
-  ctx.fillRect(W / 2 - 100, 160, 200, 4);
-  const cxLog = W / 2, cyLog = 180;
-  ctx.fillStyle = '#ee4444'; ctx.fillRect(cxLog - 8, cyLog - 8, 8, 8);
-  ctx.fillStyle = '#44aa44'; ctx.fillRect(cxLog, cyLog - 8, 8, 8);
-  ctx.fillStyle = '#4488ee'; ctx.fillRect(cxLog - 8, cyLog, 8, 8);
-  ctx.fillStyle = '#eebb44'; ctx.fillRect(cxLog, cyLog, 8, 8);
-
-  // Wall trim
+  // =====================================================================
+  // WINDOW WALL FRAMING (header, sill, vertical mullions)
+  // =====================================================================
+  // Header (above glass)
+  ctx.fillStyle = '#1a1a22';
+  ctx.fillRect(0, CEILING_H, W, HEADER_H);
   ctx.fillStyle = '#3a3a44';
-  ctx.fillRect(0, PLAY_AREA_TOP - 6, W, 2);
-  ctx.fillStyle = '#8a7a5a';
-  ctx.fillRect(0, PLAY_AREA_TOP - 4, W, 2);
+  ctx.fillRect(0, CEILING_H, W, 2);
+  ctx.fillStyle = '#0a0a10';
+  ctx.fillRect(0, WINDOW_TOP - 1, W, 1);
 
-  // Marble floor
-  ditheredGradientStops(ctx, 0, PLAY_AREA_TOP, W, HEIGHT - PLAY_AREA_TOP, [
-    { t: 0, c: '#e8e8f0' }, { t: 0.5, c: '#d8d8e0' }, { t: 1, c: '#c8c8d0' }
-  ]);
-  // Veins
-  rseed(909);
-  for (let i = 0; i < 100; i++) {
-    ctx.fillStyle = '#a8a8b8';
-    ctx.fillRect(Math.floor(srand() * W), PLAY_AREA_TOP + Math.floor(srand() * (HEIGHT - PLAY_AREA_TOP)), 20 + Math.floor(srand() * 40), 1);
-  }
-  // Tile lines
-  ctx.fillStyle = '#a0a0a8';
-  for (let lx = 0; lx < W; lx += 64) ctx.fillRect(lx, PLAY_AREA_TOP, 1, HEIGHT - PLAY_AREA_TOP);
-  for (let ly = PLAY_AREA_TOP; ly < HEIGHT; ly += 64) ctx.fillRect(0, ly, W, 1);
-  // Reflection bands
-  for (let i = 0; i < W / 500; i++) {
-    ctx.save(); ctx.globalAlpha = 0.25; ctx.fillStyle = '#ffffff';
-    ctx.fillRect(200 + i * 500, PLAY_AREA_TOP, 30, HEIGHT - PLAY_AREA_TOP);
+  // Slim aluminum mullions every 320px — narrow & low-contrast so the
+  // outdoor view reads continuously instead of getting sliced into panels.
+  const mullionSpacing = 320;
+  for (let mx = mullionSpacing; mx < W; mx += mullionSpacing) {
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = '#1a1a22';
+    ctx.fillRect(mx, WINDOW_TOP, 2, WINDOW_H);
+    ctx.globalAlpha = 0.30;
+    ctx.fillStyle = '#5a5a64';
+    ctx.fillRect(mx, WINDOW_TOP, 1, WINDOW_H);
     ctx.restore();
   }
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+
+  // Glass reflection sheen (subtle diagonal-ish highlights per pane)
+  ctx.save();
+  ctx.globalAlpha = 0.07;
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < W; i += mullionSpacing) {
+    ctx.fillRect(i + 20, WINDOW_TOP + 6, 60, WINDOW_H - 12);
+  }
+  ctx.restore();
+
+  // Window sill (below glass)
+  ctx.fillStyle = '#1a1a22';
+  ctx.fillRect(0, WINDOW_BOTTOM, W, 6);
+  ctx.fillStyle = '#3a3a44';
+  ctx.fillRect(0, WINDOW_BOTTOM, W, 1);
+
+  // Wall band between sill and floor (polished stone with warm reflection)
+  smoothGradientStops(ctx, 0, WINDOW_BOTTOM + 6, W, PLAY_AREA_TOP - WINDOW_BOTTOM - 6, [
+    { t: 0, c: '#5a4a3a' }, { t: 1, c: '#3a2e22' }
+  ]);
+  // Sunset warmth bouncing off the wall band
+  ctx.save();
+  ctx.globalAlpha = 0.20;
+  ctx.fillStyle = '#ff9870';
+  ctx.fillRect(0, WINDOW_BOTTOM + 6, W, 2);
+  ctx.restore();
+  // Floor trim line
+  ctx.fillStyle = '#1a1010';
+  ctx.fillRect(0, PLAY_AREA_TOP - 3, W, 1);
+  ctx.fillStyle = '#8a6c4a';
+  ctx.fillRect(0, PLAY_AREA_TOP - 2, W, 2);
+
+  // =====================================================================
+  // POLISHED MARBLE FLOOR (with warm sunset reflection)
+  // =====================================================================
+  smoothGradientStops(ctx, 0, PLAY_AREA_TOP, W, HEIGHT - PLAY_AREA_TOP, [
+    { t: 0.00, c: '#c0a888' }, // warm reflection band closest to window
+    { t: 0.20, c: '#dcc8a8' },
+    { t: 0.50, c: '#eaddc0' },
+    { t: 0.85, c: '#d4c2a4' },
+    { t: 1.00, c: '#a89880' }
+  ]);
+  // Marble veining (multi-tone for depth)
+  rseed(909);
+  for (let i = 0; i < 80; i++) {
+    ctx.fillStyle = 'rgba(140,118,88,0.45)';
+    ctx.fillRect(Math.floor(srand() * W),
+                 PLAY_AREA_TOP + Math.floor(srand() * (HEIGHT - PLAY_AREA_TOP)),
+                 24 + Math.floor(srand() * 60), 1);
+  }
+  for (let i = 0; i < 40; i++) {
+    ctx.fillStyle = 'rgba(80,60,40,0.35)';
+    ctx.fillRect(Math.floor(srand() * W),
+                 PLAY_AREA_TOP + Math.floor(srand() * (HEIGHT - PLAY_AREA_TOP)),
+                 12 + Math.floor(srand() * 30), 1);
+  }
+  // Tile grid (wider, polished look)
+  ctx.fillStyle = 'rgba(130,110,80,0.50)';
+  for (let lx = 0; lx < W; lx += 96) ctx.fillRect(lx, PLAY_AREA_TOP, 1, HEIGHT - PLAY_AREA_TOP);
+  for (let ly = PLAY_AREA_TOP + 64; ly < HEIGHT; ly += 96) ctx.fillRect(0, ly, W, 1);
+  // Window-light reflections cascading onto the floor
+  ctx.save();
+  for (let mx = 0; mx <= W; mx += mullionSpacing) {
+    ctx.globalAlpha = 0.10;
+    ctx.fillStyle = '#ffd8a0';
+    // Triangular streak fading down
+    for (let dy = 0; dy < 90; dy += 3) {
+      const taper = dy / 90;
+      const w2 = 90 - taper * 60;
+      ctx.fillRect(mx + 80 - w2 / 2 + 30, PLAY_AREA_TOP + dy, w2, 3);
+    }
+  }
+  ctx.restore();
+  // Floor/wall seam highlight (gold trim)
+  ctx.fillStyle = 'rgba(255,220,170,0.45)';
   ctx.fillRect(0, PLAY_AREA_TOP, W, 1);
+  ctx.fillStyle = 'rgba(255,230,180,0.25)';
+  ctx.fillRect(0, PLAY_AREA_TOP + 1, W, 1);
 
-  // Tall plants spread out
-  for (let i = 0; i < 6; i++) drawTallPlant(ctx, 80 + i * 380, PLAY_AREA_TOP - 90);
+  // =====================================================================
+  // FOREGROUND: plants, reception desks, couches (with shadows on floor)
+  // =====================================================================
+  // Soft contact shadows under tall objects
+  function shadowEllipse(cx, cy, rw, rh) {
+    ctx.save();
+    for (let s = 4; s >= 1; s--) {
+      ctx.globalAlpha = 0.10 * s;
+      ctx.fillStyle = '#000000';
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, rw + s * 2, rh + s, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
 
-  // Reception desks (2-3)
-  drawModernReceptionDesk(ctx, 320, PLAY_AREA_TOP + 50);
-  drawModernReceptionDesk(ctx, 1180, PLAY_AREA_TOP + 50);
-  drawModernReceptionDesk(ctx, 2040, PLAY_AREA_TOP + 50);
+  const plantX = [80, 540, 1000, 1480, 1960, 2400];
+  plantX.forEach(px => shadowEllipse(px + 22, PLAY_AREA_TOP + 6, 22, 5));
+  plantX.forEach(px => drawTallPlant(ctx, px, PLAY_AREA_TOP - 90));
 
-  // Couches with tables
-  drawLeatherCouch(ctx, 640, PLAY_AREA_TOP + 110);
+  const deskX = [320, 1180, 2040];
+  deskX.forEach(dx => shadowEllipse(dx + 80, PLAY_AREA_TOP + 100, 86, 6));
+  deskX.forEach(dx => drawModernReceptionDesk(ctx, dx, PLAY_AREA_TOP + 50));
+
+  const couchX = [640, 1500];
+  couchX.forEach(cx => shadowEllipse(cx + 60, PLAY_AREA_TOP + 142, 66, 5));
+  couchX.forEach(cx => drawLeatherCouch(ctx, cx, PLAY_AREA_TOP + 110));
   drawCoffeeTable(ctx, 700, PLAY_AREA_TOP + 170);
-  drawLeatherCouch(ctx, 1500, PLAY_AREA_TOP + 110);
   drawCoffeeTable(ctx, 1560, PLAY_AREA_TOP + 170);
 
   return canvas;
 }
 
-function drawLobbyWindow(ctx, x, y, w, h) {
-  ctx.fillStyle = '#5a5a64'; ctx.fillRect(x, y, w, h);
-  ctx.fillStyle = '#88a8c8'; ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
-  ctx.fillStyle = '#5a5a64';
-  ctx.fillRect(x + w / 2 - 1, y + 4, 2, h - 8);
-  ctx.fillRect(x + 4, y + h / 2 - 1, w - 8, 2);
-  // City silhouette behind
-  ctx.fillStyle = '#3a4a6a';
-  rseed(1010 + x);
-  let cx = x + 4;
-  while (cx < x + w - 4) {
-    const bw = 12 + Math.floor(srand() * 24);
-    const bh = 30 + Math.floor(srand() * 60);
-    ctx.fillRect(cx, y + h - bh - 4, bw, bh);
-    cx += bw + 1;
+// Soft sunset cloud — warm-lit underside, cooler crown.
+function drawSunsetCloud(ctx, x, y) {
+  ctx.save();
+  // Cool top (lit by sky)
+  ctx.globalAlpha = 0.75;
+  ctx.fillStyle = '#6a4878';
+  ctx.beginPath();
+  ctx.ellipse(x, y, 32, 8, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + 24, y - 4, 22, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(x - 22, y - 2, 20, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Warm-lit underside (sunset hitting the bottom)
+  ctx.globalAlpha = 0.65;
+  ctx.fillStyle = '#e88860';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 5, 30, 5, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + 22, y + 2, 18, 4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // Bright pink rim at very bottom
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = '#fbb088';
+  ctx.beginPath();
+  ctx.ellipse(x, y + 8, 26, 2, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// The signature ExxonMobil Energy Center scene: two flanking limestone-and-
+// glass volumes connected by a dramatic cantilever bridge above an open
+// plaza. Underneath the bridge: open sky.
+function drawCantileverScene(ctx, x, y, w, h) {
+  // Foreground REFLECTING POOL fills the lower portion of the window — the
+  // signature ExxonMobil Energy Center water feature.
+  const poolH = Math.max(34, Math.floor(h * 0.22));
+  const poolY = y + h - poolH;
+  const groundY = poolY - 2;       // far bank of pool
+  const horizonY = groundY - 3;    // tree-silhouette line (kept LOW so the
+                                   // support core stays fully visible)
+
+  // Distant tree silhouettes at horizon - kept short and atmospheric so
+  // they don't visually compete with the architecture.
+  rseed(1313);
+  for (let tx = x; tx < x + w; tx += 2) {
+    const th = 2 + Math.floor(srand() * 8);
+    ctx.fillStyle = '#1a1024';
+    ctx.fillRect(tx, horizonY - th, 2, th + 3);
   }
+  // Warm haze layer just above horizon
+  for (let hy = 0; hy < 12; hy++) {
+    ctx.save();
+    ctx.globalAlpha = 0.24 * (hy / 11);
+    ctx.fillStyle = '#fa8858';
+    ctx.fillRect(x, horizonY - 12 + hy, w, 1);
+    ctx.restore();
+  }
+
+  // === ARCHITECTURE LAYOUT ===
+  // ONE continuous wide multi-story building base extends across most of
+  // the scene. A tall central ARCHWAY is cut through the middle, creating
+  // two "supports" (the parts of the wings that flank the archway).
+  // The CUBE sits on TOP of the building, straddling the archway -
+  // wider than the archway gap so the wings hold it up on each side.
+  // (Like a donut on two coffee cups, per the reference.)
+
+  // The CUBE rises above the building, dominating the composition - its
+  // top edge is near the top of the window, and it extends well past the
+  // building's parapet height.
+  const cubeH = Math.floor(h * 0.55);
+  const cubeW = Math.floor(w * 0.22);
+  const cubeX = x + Math.floor((w - cubeW) / 2);
+  const cubeY = y + 4; // very near the top of the scene
+
+  // The building base is SHORTER than the cube. It sits below, with the
+  // cube's bottom overlapping the building top by ~10px so the cube reads
+  // as "resting on" the wings.
+  const baseW = Math.floor(w * 0.78);
+  const baseY = cubeY + cubeH - 10;
+  const baseH = groundY - baseY;
+  const baseX = x + Math.floor((w - baseW) / 2);
+
+  // Central archway through the building base. The archway is NARROWER
+  // than the cube so the wings on each side support the cube's underside.
+  const portalW = Math.floor(cubeW * 0.55);
+  const portalH = Math.floor(baseH * 0.82);
+  const portalX = x + Math.floor((w - portalW) / 2);
+  const portalY = groundY - portalH;
+
+  // Building wings on either side of the archway (same building, just
+  // split by the central portal cut).
+  const leftWingX = baseX;
+  const leftWingW = portalX - baseX;
+  const rightWingX = portalX + portalW;
+  const rightWingW = baseX + baseW - rightWingX;
+
+  // Distant atmospheric campus visible far behind everything
+  drawDistantSilhouette(ctx, x + 40, horizonY - 36, w - 80, 36);
+
+  // The two building wings (each wing is a multi-story glass volume).
+  // Drawn FIRST so the cube can overlap them cleanly on top.
+  drawCampusBaseWing(ctx, leftWingX, baseY, leftWingW, baseH);
+  drawCampusBaseWing(ctx, rightWingX, baseY, rightWingW, baseH);
+
+  // The inner edge of each wing facing the archway: limestone reveal
+  // showing the depth/thickness of the wall through the portal cut.
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(portalX - 3, portalY, 3, portalH);
+  ctx.fillRect(portalX + portalW, portalY, 3, portalH);
+  ctx.fillStyle = '#5a4a38';
+  ctx.fillRect(portalX - 3, portalY, 1, portalH);
+  ctx.fillRect(portalX + portalW + 2, portalY, 1, portalH);
+  // Top edge of the archway (lintel) - a horizontal beam
+  ctx.fillStyle = '#5a4a38';
+  ctx.fillRect(portalX - 3, portalY, portalW + 6, 2);
+  ctx.fillStyle = '#9a8d76';
+  ctx.fillRect(portalX - 3, portalY + 2, portalW + 6, 1);
+
+  // A faint warm glow inside the archway (entry plaza visible through it)
+  ctx.save();
+  ctx.globalAlpha = 0.30;
+  smoothGradientStops(ctx, portalX, portalY + Math.floor(portalH * 0.4),
+                      portalW, Math.floor(portalH * 0.6), [
+    { t: 0, c: '#f8a868' },
+    { t: 1, c: '#5a4030' }
+  ]);
+  ctx.restore();
+  // Tiny lit doorway at the bottom of the archway (entrance)
+  const doorW = Math.max(8, Math.floor(portalW * 0.18));
+  const doorH = Math.max(10, Math.floor(portalH * 0.20));
+  ctx.fillStyle = '#fcd890';
+  ctx.fillRect(portalX + (portalW - doorW) / 2, portalY + portalH - doorH, doorW, doorH);
+  ctx.fillStyle = '#fff0c0';
+  ctx.fillRect(portalX + (portalW - doorW) / 2, portalY + portalH - doorH, doorW, 1);
+
+  // The floating cube - the CENTERPIECE on top of the building
+  drawFloatingCube(ctx, cubeX, cubeY, cubeW, cubeH);
+
+  // === REFLECTING POOL (foreground water with reflections) ===
+  drawCantileverPool(ctx, x, poolY, w, poolH, {
+    cubeX, cubeY, cubeW, cubeH,
+    leftWingX, leftWingW,
+    rightWingX, rightWingW,
+    baseY, baseH,
+    portalX, portalY, portalW, portalH,
+    groundY
+  });
+
+  // Narrow strip of plaza/curb along the back edge of the pool
+  ctx.fillStyle = '#3a2818';
+  ctx.fillRect(x, groundY - 2, w, 2);
+  ctx.fillStyle = '#5a4830';
+  ctx.fillRect(x, groundY, w, 2);
+}
+
+// THE FLOATING CUBE - the architectural centerpiece. A nearly-square
+// glass-clad volume suspended above the plaza, with heavy diagonal X-truss
+// bracing filling the entire envelope. The truss is dramatically visible
+// through the translucent glass - it's both the building's structure AND
+// its primary aesthetic moment.
+function drawFloatingCube(ctx, x, y, w, h) {
+  // === DEEP SHADOW BENEATH THE CUBE (essential to sell the floating mass) ===
+  ctx.save();
+  ctx.globalAlpha = 0.70;
+  ctx.fillStyle = '#080410';
+  ctx.fillRect(x - 8, y + h, w + 16, 6);
+  ctx.globalAlpha = 0.40;
+  ctx.fillRect(x - 8, y + h + 6, w + 16, 5);
+  ctx.globalAlpha = 0.18;
+  ctx.fillRect(x - 8, y + h + 11, w + 16, 5);
+  ctx.restore();
+
+  // === TOP CAP (thin parapet, lit by sky) ===
+  const capH = 5;
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x - 3, y, w + 6, capH);
+  ctx.fillStyle = '#e0d4b8';
+  ctx.fillRect(x - 3, y, w + 6, 1);
+  ctx.fillStyle = '#5a4a38';
+  ctx.fillRect(x - 3, y + capH - 1, w + 6, 1);
+
+  // === BOTTOM SOFFIT (thicker, in shadow underneath) ===
+  const soffH = 6;
+  ctx.fillStyle = '#2a1e14';
+  ctx.fillRect(x - 5, y + h - soffH, w + 10, soffH);
+  ctx.fillStyle = '#5a4838';
+  ctx.fillRect(x - 5, y + h - soffH, w + 10, 1);
+  ctx.fillStyle = '#0a0608';
+  ctx.fillRect(x - 5, y + h - 1, w + 10, 1);
+
+  // === GLASS BODY (sunset-tinted, reflecting the sky) ===
+  const bodyY = y + capH;
+  const bodyH = h - capH - soffH;
+  smoothGradientStops(ctx, x, bodyY, w, bodyH, [
+    { t: 0, c: '#4a2c5c' },      // upper - cool sky reflection
+    { t: 0.35, c: '#82486a' },   // mauve mid
+    { t: 0.7, c: '#c66448' },    // coral reflection
+    { t: 1, c: '#e89060' }       // warm lower
+  ]);
+
+  // === HORIZONTAL FLOOR LINES (3 stories) ===
+  const floors = 3;
+  const floorH = bodyH / floors;
+  ctx.fillStyle = '#1a0e08';
+  for (let f = 1; f < floors; f++) {
+    ctx.fillRect(x, bodyY + Math.floor(f * floorH) - 1, w, 2);
+  }
+  // Floor slab front edges with a subtle warm highlight
+  ctx.save();
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = '#ffb060';
+  for (let f = 1; f < floors; f++) {
+    ctx.fillRect(x + 2, bodyY + Math.floor(f * floorH), w - 4, 1);
+  }
+  ctx.restore();
+
+  // === LIT OFFICE WINDOWS (warm interior glow showing through glass) ===
+  // Each floor has a row of lit window strips - mostly lit at dusk.
+  rseed((x * 5 + y * 11) & 0xffff);
+  const winCount = Math.max(10, Math.floor(w / 32));
+  const winSpacing = w / winCount;
+  for (let f = 0; f < floors; f++) {
+    const fY = bodyY + f * floorH + Math.floor(floorH * 0.15);
+    const winH = Math.floor(floorH * 0.55);
+    for (let i = 0; i < winCount; i++) {
+      const wX = x + i * winSpacing + 2;
+      const wW = winSpacing - 4;
+      const lit = srand() > 0.18;
+      if (lit) {
+        ctx.fillStyle = '#fcc878';
+        ctx.fillRect(wX, fY, wW, winH);
+        ctx.fillStyle = '#fff0c8';
+        ctx.fillRect(wX, fY, wW, 1);
+      } else {
+        ctx.fillStyle = '#5a3060';
+        ctx.fillRect(wX, fY, wW, winH);
+      }
+    }
+  }
+
+  // === HEAVY DIAGONAL X-TRUSS BRACING (the signature visual element) ===
+  // Drawn AFTER the windows so it overlays them, with stronger contrast.
+  // Each truss bay is roughly square and spans full body height.
+  ctx.save();
+  ctx.strokeStyle = '#1a0e08';
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.78;
+  const trussBays = Math.max(4, Math.floor(w / 90));
+  const trussBayW = w / trussBays;
+  // Vertical bay dividers (heavy posts)
+  for (let i = 0; i <= trussBays; i++) {
+    ctx.fillStyle = '#1a0e08';
+    ctx.fillRect(x + Math.floor(i * trussBayW) - 1, bodyY, 2, bodyH);
+  }
+  // X-bracing crossing each bay
+  for (let i = 0; i < trussBays; i++) {
+    const bx = x + i * trussBayW;
+    ctx.beginPath();
+    ctx.moveTo(bx + 3, bodyY + 3);
+    ctx.lineTo(bx + trussBayW - 3, bodyY + bodyH - 3);
+    ctx.moveTo(bx + trussBayW - 3, bodyY + 3);
+    ctx.lineTo(bx + 3, bodyY + bodyH - 3);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  // === GLASS REFLECTIONS (subtle horizontal sheen bands) ===
+  ctx.save();
+  ctx.globalAlpha = 0.16;
+  ctx.fillStyle = '#ffe8c8';
+  ctx.fillRect(x + 2, bodyY + 2, w - 4, 1);
+  ctx.fillRect(x + 2, bodyY + Math.floor(bodyH * 0.5), w - 4, 1);
+  ctx.restore();
+
+  // === SUBTLE EDGE GLOW (warm sunset wrapping the cantilever ends) ===
+  ctx.save();
+  ctx.globalAlpha = 0.30;
+  ctx.fillStyle = '#ffb060';
+  ctx.fillRect(x - 3, bodyY, 2, bodyH);
+  ctx.fillRect(x + w + 1, bodyY, 2, bodyH);
+  ctx.restore();
+}
+
+// Campus base wing - one half of the long continuous building that the
+// cube sits on top of. Limestone piers + multi-story floor-to-ceiling
+// glass curtain wall, warm office interiors visible at sunset.
+function drawCampusBaseWing(ctx, x, y, w, h) {
+  if (w <= 0) return;
+
+  // Body shadow wash
+  smoothGradientStops(ctx, x, y, w, h, [
+    { t: 0, c: '#5a4838' },
+    { t: 0.5, c: '#7a6850' },
+    { t: 1, c: '#5e4c3a' }
+  ]);
+
+  // Limestone piers divide the facade into glass bays.
+  const pierW = Math.max(4, Math.floor(w * 0.025));
+  const targetBayW = 56;
+  const bayCount = Math.max(3, Math.floor((w - pierW) / (targetBayW + pierW)));
+  const bayW = (w - (bayCount + 1) * pierW) / bayCount;
+
+  for (let p = 0; p <= bayCount; p++) {
+    const px = x + p * (bayW + pierW);
+    ctx.fillStyle = '#9a8d76';
+    ctx.fillRect(px, y, pierW, h);
+    ctx.fillStyle = '#c0b39a';
+    ctx.fillRect(px, y, 1, h);
+    ctx.fillStyle = '#5a4a38';
+    ctx.fillRect(px + pierW - 1, y, 1, h);
+  }
+
+  // Glass bays - 3 stories of warm-lit office windows
+  const floors = 3;
+  const floorH = (h - 6) / floors;
+  rseed((x * 3 + y * 7) & 0xffff);
+  for (let b = 0; b < bayCount; b++) {
+    const bX = x + pierW + b * (bayW + pierW);
+    const bW = bayW;
+    // Base glass tint
+    ctx.fillStyle = '#3a2848';
+    ctx.fillRect(bX, y + 3, bW, h - 6);
+
+    for (let f = 0; f < floors; f++) {
+      const fY = y + 3 + f * floorH;
+      const lit = srand() > 0.20;
+      const winH = Math.floor(floorH * 0.55);
+      if (lit) {
+        ctx.fillStyle = '#e8a868';
+        ctx.fillRect(bX, fY + 2, bW, winH);
+        ctx.fillStyle = '#fce0a0';
+        ctx.fillRect(bX, fY + 2, bW, 1);
+      } else {
+        ctx.fillStyle = '#4a3858';
+        ctx.fillRect(bX, fY + 2, bW, winH);
+      }
+      ctx.fillStyle = '#1a1208';
+      ctx.fillRect(bX, fY + floorH - 2, bW, 2);
+    }
+    // Vertical mullions within each bay
+    ctx.fillStyle = 'rgba(20,12,8,0.55)';
+    ctx.fillRect(bX + Math.floor(bW / 2), y + 3, 1, h - 6);
+  }
+
+  // Top parapet (continuous cornice)
+  ctx.fillStyle = '#aa9d80';
+  ctx.fillRect(x, y, w, 4);
+  ctx.fillStyle = '#d8cdb0';
+  ctx.fillRect(x, y, w, 1);
+  ctx.fillStyle = '#5a4a38';
+  ctx.fillRect(x, y + 4, w, 1);
+
+  // Base shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x, y + h, w, 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(x, y + h + 2, w, 2);
+}
+
+// Distant atmospheric building silhouettes - faded into haze for depth.
+function drawDistantSilhouette(ctx, x, y, w, h) {
+  rseed(x * 13 + 7);
+  let cx = x;
+  ctx.save();
+  ctx.globalAlpha = 0.45;
+  while (cx < x + w) {
+    const bw = 30 + Math.floor(srand() * 60);
+    const bh = 20 + Math.floor(srand() * (h - 6));
+    ctx.fillStyle = '#2a1e30';
+    ctx.fillRect(cx, y + h - bh, bw, bh);
+    // A few lit windows
+    ctx.fillStyle = '#caa860';
+    for (let wy = y + h - bh + 4; wy < y + h - 4; wy += 6) {
+      for (let wx = cx + 3; wx < cx + bw - 3; wx += 5) {
+        if (srand() > 0.70) ctx.fillRect(wx, wy, 1, 1);
+      }
+    }
+    cx += bw + 2;
+  }
+  ctx.restore();
+}
+
+// Cantilever-scene reflecting pool - foreground water that mirrors the
+// architecture. Buildings appear upside-down in the water, faded with
+// water-tint, surface ripples, and specular highlights. Separate from
+// the simpler drawReflectingPool used in the Quad stage.
+function drawCantileverPool(ctx, x, y, w, h, scene) {
+  // Pool water base gradient - reflects the sunset sky (warm at far edge
+  // where the sky is brightest, cooler/darker near).
+  smoothGradientStops(ctx, x, y, w, h, [
+    { t: 0, c: '#5a4060' },   // far edge - mirrors warm horizon
+    { t: 0.3, c: '#3a3a60' }, // mid-far - mirrors mauve sky
+    { t: 0.7, c: '#2a3858' }, // mid-near - cooler
+    { t: 1, c: '#1a2848' }    // near edge - deepest
+  ]);
+
+  // === REFLECTIONS - drawn as flipped, water-tinted strips ===
+  // Each building reflection: a downward strip starting at the waterline,
+  // tinted with the water color, with surface ripple breaks built in.
+  function reflectBuilding(bx, by, bw, bh, baseColor, accentColor, hasTruss) {
+    // Reflected vertical extent: a building of height bh produces a reflection
+    // up to bh long, starting at the waterline going DOWN.
+    const reflLen = Math.min(bh, h);
+    // Each pixel row in the reflection corresponds to a building row from bottom-up.
+    // We draw it with alternating darker/lighter bands to suggest water tinting.
+    for (let dy = 0; dy < reflLen; dy++) {
+      // Vertical alpha falloff so reflection fades as it goes deeper
+      const fade = 0.55 - 0.30 * (dy / reflLen);
+      // Slight horizontal jitter for "water surface" wobble
+      const jitter = Math.floor(Math.sin((bx + dy) * 0.18) * 1.5);
+      ctx.save();
+      ctx.globalAlpha = fade;
+      ctx.fillStyle = dy % 6 < 3 ? baseColor : accentColor;
+      ctx.fillRect(bx + jitter, y + dy, bw, 1);
+      ctx.restore();
+    }
+    // Truss hint (X-bracing) showing through the reflection
+    if (hasTruss && reflLen > 8) {
+      ctx.save();
+      ctx.globalAlpha = 0.30;
+      ctx.strokeStyle = '#1a0e08';
+      ctx.lineWidth = 1;
+      const bays = Math.max(3, Math.floor(bw / 90));
+      const bayW = bw / bays;
+      for (let i = 0; i < bays; i++) {
+        const bX2 = bx + i * bayW;
+        const jit1 = Math.floor(Math.sin(bX2 * 0.18) * 1.5);
+        const jit2 = Math.floor(Math.sin((bX2 + bayW) * 0.18) * 1.5);
+        ctx.beginPath();
+        ctx.moveTo(bX2 + 2 + jit1, y + 2);
+        ctx.lineTo(bX2 + bayW - 2 + jit2, y + reflLen - 2);
+        ctx.moveTo(bX2 + bayW - 2 + jit2, y + 2);
+        ctx.lineTo(bX2 + 2 + jit1, y + reflLen - 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+
+  // Cube reflection (with truss bracing showing through the water)
+  reflectBuilding(scene.cubeX, scene.cubeY, scene.cubeW, scene.cubeH,
+                  '#5a3850', '#3a2848', true);
+
+  // Left and right wing reflections (the building base)
+  reflectBuilding(scene.leftWingX, scene.baseY, scene.leftWingW, scene.baseH,
+                  '#5a3848', '#3a2838', false);
+  reflectBuilding(scene.rightWingX, scene.baseY, scene.rightWingW, scene.baseH,
+                  '#5a3848', '#3a2838', false);
+
+  // Warm-window streaks in the wing reflections (catching lit offices)
+  function wingWindowStreaks(wx, ww, wh) {
+    if (ww <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = 0.40;
+    ctx.fillStyle = '#e89858';
+    for (let ry2 = 0; ry2 < Math.min(wh, h); ry2 += 9) {
+      const jit = Math.floor(Math.sin((wx + ry2) * 0.18) * 1.5);
+      ctx.fillRect(wx + 1 + jit, y + ry2, ww - 2, 2);
+    }
+    ctx.restore();
+  }
+  wingWindowStreaks(scene.leftWingX, scene.leftWingW, scene.baseH);
+  wingWindowStreaks(scene.rightWingX, scene.rightWingW, scene.baseH);
+
+  // Warm glow reflection from the archway entrance lit doorway
+  ctx.save();
+  ctx.globalAlpha = 0.50;
+  ctx.fillStyle = '#fcc878';
+  ctx.fillRect(scene.portalX + scene.portalW / 2 - 12, y, 24, 4);
+  ctx.globalAlpha = 0.22;
+  ctx.fillRect(scene.portalX, y, scene.portalW, 8);
+  ctx.restore();
+
+  // === SUNSET SKY REFLECTION wash on far portion of pool ===
+  // Where the architecture doesn't cover the water, the sky reflects too.
+  ctx.save();
+  ctx.globalAlpha = 0.30;
+  smoothGradientStops(ctx, x, y, w, Math.floor(h * 0.4), [
+    { t: 0, c: '#f8a868' },
+    { t: 1, c: '#5a4068' }
+  ]);
+  ctx.restore();
+
+  // === SURFACE HIGHLIGHTS (specular sheen + ripple lines) ===
+  // The waterline highlight - a bright horizontal sheen at the top
+  ctx.fillStyle = 'rgba(220,200,180,0.45)';
+  ctx.fillRect(x, y, w, 1);
+  ctx.fillStyle = 'rgba(255,230,200,0.18)';
+  ctx.fillRect(x, y + 1, w, 1);
+
+  // Scattered ripple highlights (broken thin lines)
+  rseed(1515);
+  ctx.save();
+  for (let i = 0; i < Math.floor(w / 14); i++) {
+    const rx = x + Math.floor(srand() * w);
+    const ry2 = y + 2 + Math.floor(srand() * (h - 4));
+    const rw = 6 + Math.floor(srand() * 18);
+    ctx.globalAlpha = 0.30 + srand() * 0.35;
+    ctx.fillStyle = '#e8f4f8';
+    ctx.fillRect(rx, ry2, rw, 1);
+  }
+  ctx.restore();
+
+  // === FAR-EDGE POOL CURB SHADOW ===
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(x, y, w, 1);
 }
 
 function drawTallPlant(ctx, x, baseY) {
