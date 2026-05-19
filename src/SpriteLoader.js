@@ -191,58 +191,21 @@ function processSheet(img) {
 
 // ===== Frame slicing with tight bbox cropping =====
 
-function findMainContentBounds(frameCtx, w, h) {
-  const imageData = frameCtx.getImageData(0, 0, w, h);
-  const data = imageData.data;
-  const componentId = new Int32Array(w * h);
-  let nextId = 1;
-  let bestSize = 0;
-  let bestBounds = null;
-
-  for (let startY = 0; startY < h; startY++) {
-    for (let startX = 0; startX < w; startX++) {
-      const startPtr = startY * w + startX;
-      if (componentId[startPtr] !== 0) continue;
-      if (data[startPtr * 4 + 3] === 0) continue;
-
-      const id = nextId++;
-      const stack = [startX, startY];
-      let size = 0;
-      const bounds = { minX: startX, maxX: startX, minY: startY, maxY: startY };
-
-      while (stack.length > 0) {
-        const cy = stack.pop();
-        const cx = stack.pop();
-        if (cx < 0 || cx >= w || cy < 0 || cy >= h) continue;
-        const ptr = cy * w + cx;
-        if (componentId[ptr] !== 0) continue;
-        if (data[ptr * 4 + 3] === 0) continue;
-
-        componentId[ptr] = id;
-        size++;
-        if (cx < bounds.minX) bounds.minX = cx;
-        if (cx > bounds.maxX) bounds.maxX = cx;
-        if (cy < bounds.minY) bounds.minY = cy;
-        if (cy > bounds.maxY) bounds.maxY = cy;
-
-        stack.push(cx + 1, cy);
-        stack.push(cx - 1, cy);
-        stack.push(cx, cy + 1);
-        stack.push(cx, cy - 1);
-      }
-
-      if (size > bestSize) {
-        bestSize = size;
-        bestBounds = bounds;
-      }
-    }
-  }
-
-  return bestSize > 50 ? bestBounds : null;
-}
-
 function cropFrame(sheet, col, row, frameW, frameH) {
-  // Extract frame from the sheet at (col, row)
+  // Extract the FULL cell, no tight-bbox cropping.
+  //
+  // Previously we picked the largest connected non-transparent component and
+  // bbox-cropped to it. That made walk/punch frames crop ~90×140 (just the
+  // body), but SPECIAL frames late in the animation crop ~250×250 (the
+  // energy ball dominates the cell). Rendering each at native pixel scale
+  // then produced wildly different on-screen sizes across the 7 frames,
+  // even though the sheet draws the body at a consistent size in every cell.
+  //
+  // The sheet's cell grid is uniform: body's feet are at the bottom of the
+  // cell, body is roughly horizontally centered, FX extends into the cell's
+  // padding. Rendering the whole cell keeps the body locked in place and
+  // lets FX appear at its drawn size relative to the body — exactly as the
+  // artist authored it.
   const frameCanvas = document.createElement('canvas');
   frameCanvas.width = frameW;
   frameCanvas.height = frameH;
@@ -252,30 +215,24 @@ function cropFrame(sheet, col, row, frameW, frameH) {
     col * frameW, row * frameH, frameW, frameH,
     0, 0, frameW, frameH);
 
-  // Find bounds of largest connected component (the character)
-  const bounds = findMainContentBounds(frameCtx, frameW, frameH);
-
-  if (!bounds) {
-    // Empty frame - return null-shaped canvas
-    return null;
+  // Sanity check: bail if the cell is essentially empty (helps catch sheet
+  // dimension mismatches early instead of rendering invisible frames).
+  const data = frameCtx.getImageData(0, 0, frameW, frameH).data;
+  let opaqueCount = 0;
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] > 0) {
+      opaqueCount++;
+      if (opaqueCount > 50) break;
+    }
   }
-
-  const cropW = bounds.maxX - bounds.minX + 1;
-  const cropH = bounds.maxY - bounds.minY + 1;
-
-  const croppedCanvas = document.createElement('canvas');
-  croppedCanvas.width = cropW;
-  croppedCanvas.height = cropH;
-  const croppedCtx = croppedCanvas.getContext('2d');
-  croppedCtx.imageSmoothingEnabled = false;
-  croppedCtx.drawImage(frameCanvas, bounds.minX, bounds.minY, cropW, cropH, 0, 0, cropW, cropH);
+  if (opaqueCount < 50) return null;
 
   return {
-    canvas: croppedCanvas,
-    width: cropW,
-    height: cropH,
-    anchorX: cropW / 2,
-    anchorY: cropH // feet at bottom for ground alignment
+    canvas: frameCanvas,
+    width: frameW,
+    height: frameH,
+    anchorX: frameW / 2,
+    anchorY: frameH // feet at bottom for ground alignment
   };
 }
 

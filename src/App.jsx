@@ -1340,9 +1340,14 @@ const BeatEmUpGame = () => {
               width={CANVAS_WIDTH}
               height={CANVAS_HEIGHT}
               style={{
-                flex: 1,
+                // Lock the 12:7 ratio so portrait/landscape orientation changes
+                // can't squish the canvas. maxWidth/maxHeight without aspect-ratio
+                // applies each axis independently and distorts the image.
+                aspectRatio: `${CANVAS_WIDTH} / ${CANVAS_HEIGHT}`,
                 maxWidth: '100%',
                 maxHeight: 'calc(100vh - 160px)',
+                width: 'auto',
+                height: 'auto',
                 margin: '0 auto',
                 border: '3px solid #00ffff',
                 boxShadow: '0 0 40px rgba(0, 255, 255, 0.3)',
@@ -1810,12 +1815,12 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
  */
 function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
   const sprite = frame.sprite;
-  // Render at source pixel dimensions. The sprite sheet's per-cell body size
-  // is consistent; tight-bbox crops vary in dimensions per pose (kicks extend
-  // forward → wider crop; special includes FX glow → larger overall), but the
-  // body inside is the SAME pixel size in each. Forcing a fixed drawH per
-  // category previously inflated kicks ~21% and let the special FX glow
-  // dictate the whole render size — using native scale preserves consistency.
+  // Render each frame at its native source pixel dimensions. The SpriteLoader
+  // now returns full cells (~125×166) instead of bbox-cropped sub-regions,
+  // so every frame has the SAME canvas dimensions and the body sits in the
+  // SAME position within the cell. FX (special's energy ball, kick's wind
+  // streaks) appear at the relative size the artist drew them without
+  // distorting the body's on-screen size or position.
   const SPRITE_SCALE = 1.0;
   const drawW = sprite.canvas.width * SPRITE_SCALE;
   const drawH = sprite.canvas.height * SPRITE_SCALE;

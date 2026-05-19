@@ -119,8 +119,14 @@ class Unit {
 
     this.health -= finalDamage;
 
-    // Reset attack cooldown when hit (can't attack right after being hit)
-    this.attackCooldown = 0.5 / this.effectiveStats.attackSpeed;
+    // Apply hit-stun ONLY to enemies. For players, hit-stun was making the
+    // client cooldown UI lie — the ability appeared ready but the server
+    // silently rejected the press because attackCooldown had been reset on
+    // hit. Players should always be able to fight back. Enemies still
+    // stagger so the player gets reward for landing combos.
+    if (this.team !== 'players') {
+      this.attackCooldown = 0.5 / this.effectiveStats.attackSpeed;
+    }
 
     if (this.health <= 0) {
       this.health = 0;
