@@ -1,49 +1,55 @@
 /**
  * SpriteLoader - Loads BillSpriteSheet.png for Corporate Crawler Bill
  *
- * Sheet: 771x1024, 5 rows of animations with variable frame counts.
- * Background is a uniform bright-magenta chroma-key color we strip to alpha.
+ * Sheet: 771x1024 (JPEG content, served as .png).
+ * Uniform 8 cols x 6 rows grid -> cell size ~96 x 170 px.
+ * Background is a bright magenta chroma-key we strip to alpha.
+ *
+ * Column 0 of every row contains a vertical text label
+ * ("WALKING", "PUNCHING", "KICKING", "JUMPING", "Getting Knocked Down",
+ * "Special Explosion Ability"). We never slice column 0 - frames are taken
+ * from columns 1..7 only, giving us up to 7 frames per animation.
  *
  * Row layout (top to bottom):
- *   0: Walking              - 5 frames (single row; mirror horizontally when facing left)
- *   1: Punching             - 5 frames
- *   2: Kicking              - 5 frames
- *   3: Knock Down           - 6 frames (standing → stagger → fall → lying)
- *   4: Special Shield Bubble - 6 frames (stance → charge → bubble → release)
+ *   0: Walking                    - up to 7 frames
+ *   1: Punching                   - up to 7 frames
+ *   2: Kicking                    - up to 7 frames
+ *   3: Jumping                    - up to 7 frames
+ *   4: Getting Knocked Down       - up to 7 frames (later cells may be empty)
+ *   5: Special Explosion Ability  - up to 7 frames
  *
- * Each row has a small text label in the top-left corner ("Walking",
- * "Punching", etc.). We mask that label rectangle to transparent after the
- * chroma key so it doesn't render above the character's head.
- *
- * There is no dedicated jump row, so jump frames fall back to the walking row.
+ * The character is always drawn facing right; the picker sets mirror=true
+ * when the unit's direction is left.
  */
 
 const SHEET_SRC = '/sprites/BillSpriteSheet.png';
 
-// Sheet is nominally 771x1024 with 5 equal-height rows of animations (so each
-// row is ~204 px tall and frame widths are derived from the row's frame count:
-// 5-frame rows → 154 px wide, 6-frame rows → 128 px wide). All dimensions are
-// read from the loaded image at runtime so the loader handles minor resize.
-const ROWS = 5;
+// Uniform grid: 8 cols (col 0 = label, cols 1..7 = frame slots), 6 rows.
+const GRID_COLS = 8;
+const GRID_ROWS = 6;
+const LABEL_COL = 0;
+const FIRST_FRAME_COL = 1; // skip the label column entirely
 
-// Per-row animation config. frameCount controls how the row is sliced
-// horizontally; the resulting cell width = sheet.width / frameCount.
+// Per-animation row mapping. frameCount is the *intent* count starting from
+// FIRST_FRAME_COL; if a cell turns out to be empty (failed sanity check in
+// cropFrame), the picker falls back to an adjacent valid frame.
 const ANIM = {
-  WALK:    { rowIndex: 0, frameCount: 5 },
-  PUNCH:   { rowIndex: 1, frameCount: 5 },
-  KICK:    { rowIndex: 2, frameCount: 5 },
-  KO:      { rowIndex: 3, frameCount: 6 },
-  SPECIAL: { rowIndex: 4, frameCount: 6 }
+  WALK:    { rowIndex: 0, frameCount: 7 },
+  PUNCH:   { rowIndex: 1, frameCount: 7 },
+  KICK:    { rowIndex: 2, frameCount: 7 },
+  JUMP:    { rowIndex: 3, frameCount: 7 },
+  KO:      { rowIndex: 4, frameCount: 7 },
+  SPECIAL: { rowIndex: 5, frameCount: 7 }
 };
 
-// Label region (top-left of each row) - masked to transparent after chroma key.
-// Empirically the labels occupy roughly the top 22 px and leftmost ~150 px of
-// each row. Character heads sit lower than 22 px from the row top, so masking
-// this rectangle removes the labels without clipping any character art.
-const LABEL_BOX_W = 150;
-const LABEL_BOX_H = 22;
-
-// ===== Chroma key (single dominant background color) =====
+// ===== Chroma key (single dominant background color, generous threshold) =====
+//
+// The user explicitly asked for "no magenta halo from the characters". JPEG
+// compression bleeds magenta-toward-skin pixels at the character outline.
+// Using a wider distance threshold catches those near-magenta halo pixels
+// (and the slightly-darker pink cell borders) without bleeding into skin /
+// hair / clothing / boots, which are all far from magenta in RGB space.
+const CHROMA_DIST_SQ = 85 * 85; // ~7225
 
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -62,9 +68,7 @@ function processSheet(img) {
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
 
-  // FAST PATH: source already has real alpha transparency (e.g. a PNG with
-  // proper transparent background). Skip chroma key entirely to avoid eating
-  // character outline pixels.
+  // FAST PATH: source already has real alpha transparency. Skip chroma key.
   let alphaPixelCount = 0;
   let totalSampled = 0;
   for (let i = 3; i < data.length; i += 4 * 100) {
@@ -73,19 +77,18 @@ function processSheet(img) {
   }
   if (alphaPixelCount / totalSampled > 0.15) {
     console.log('[SpriteLoader] Source has real alpha - skipping chroma key');
-    maskLabelRegions(data, w, h);
     ctx.putImageData(imageData, 0, 0);
     return canvas;
   }
 
-  // Sample the magenta chromakey color by averaging several corner / edge
-  // points. JPEG compression jitters individual pixels ±10 RGB, so an average
-  // is more reliable than any single sample.
-  const samplePoints = [
-    [0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1],
-    [Math.floor(w / 2), 0], [Math.floor(w / 2), h - 1],
-    [0, Math.floor(h / 2)], [w - 1, Math.floor(h / 2)]
-  ];
+  // Find the dominant background magenta. We sample multiple TOP edge points
+  // (they're guaranteed to be pure background since the character cells start
+  // below row 0). Averaging absorbs JPEG noise.
+  const samplePoints = [];
+  for (let x = 5; x < w - 5; x += Math.max(1, Math.floor(w / 20))) {
+    samplePoints.push([x, 2]);            // near top edge
+    samplePoints.push([x, h - 3]);        // near bottom edge
+  }
   let sumR = 0, sumG = 0, sumB = 0;
   for (const [x, y] of samplePoints) {
     const idx = (y * w + x) * 4;
@@ -95,56 +98,29 @@ function processSheet(img) {
   const bgG = sumG / samplePoints.length;
   const bgB = sumB / samplePoints.length;
   console.log(
-    `[SpriteLoader] BillSpriteSheet: ${w}x${h}, chromakey rgb(${Math.round(bgR)},${Math.round(bgG)},${Math.round(bgB)})`
+    `[SpriteLoader] BillSpriteSheet: ${w}x${h}, chromakey rgb(${Math.round(bgR)},${Math.round(bgG)},${Math.round(bgB)}), threshold ${Math.sqrt(CHROMA_DIST_SQ).toFixed(0)}`
   );
-
-  // Distance threshold: magenta is far in RGB space from skin, denim, olive
-  // shirt, hair, etc. A generous threshold tolerates JPEG noise on the
-  // background without bleeding into character pixels.
-  const DIST_SQ_THRESHOLD = 60 * 60;
 
   let removed = 0;
   for (let i = 0; i < data.length; i += 4) {
     const dr = data[i] - bgR;
     const dg = data[i + 1] - bgG;
     const db = data[i + 2] - bgB;
-    if (dr * dr + dg * dg + db * db < DIST_SQ_THRESHOLD) {
+    if (dr * dr + dg * dg + db * db < CHROMA_DIST_SQ) {
       data[i + 3] = 0;
       removed++;
     }
   }
-
   const transparentRatio = removed / (w * h);
   console.log(
     `[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after chroma key`
   );
-  if (transparentRatio < 0.20) {
+  if (transparentRatio < 0.30) {
     throw new Error(`Chroma key failed: only ${(transparentRatio * 100).toFixed(1)}% transparent`);
   }
 
-  // Wipe out per-row text labels ("Walking", "Punching", ...) that survive the
-  // chroma key because they're dark pixels on magenta. They sit in the
-  // top-left of each row and would otherwise float above the character's head
-  // when a frame is drawn.
-  maskLabelRegions(data, w, h);
-
   ctx.putImageData(imageData, 0, 0);
   return canvas;
-}
-
-function maskLabelRegions(data, w, h) {
-  const rowH = Math.floor(h / ROWS);
-  for (let r = 0; r < ROWS; r++) {
-    const y0 = r * rowH;
-    const yEnd = Math.min(y0 + LABEL_BOX_H, h);
-    const xEnd = Math.min(LABEL_BOX_W, w);
-    for (let y = y0; y < yEnd; y++) {
-      const rowOffset = y * w;
-      for (let x = 0; x < xEnd; x++) {
-        data[(rowOffset + x) * 4 + 3] = 0;
-      }
-    }
-  }
 }
 
 // ===== Frame slicing =====
@@ -157,18 +133,19 @@ function cropFrame(sheet, sx, sy, frameW, frameH) {
   frameCtx.imageSmoothingEnabled = false;
   frameCtx.drawImage(sheet, sx, sy, frameW, frameH, 0, 0, frameW, frameH);
 
-  // Sanity check: if the cell is essentially empty (no character art), return
-  // null so the picker can fall back to an adjacent frame instead of drawing
-  // an invisible sprite.
+  // Sanity check: skip near-empty cells so picker falls back to neighbor.
+  // Threshold ~3% of cell area opaque feels right for "this cell actually
+  // contains a character" - empty cells average <0.5%.
   const data = frameCtx.getImageData(0, 0, frameW, frameH).data;
   let opaqueCount = 0;
+  const minOpaque = Math.floor(frameW * frameH * 0.03);
   for (let i = 3; i < data.length; i += 4) {
     if (data[i] > 0) {
       opaqueCount++;
-      if (opaqueCount > 50) break;
+      if (opaqueCount >= minOpaque) break;
     }
   }
-  if (opaqueCount < 50) return null;
+  if (opaqueCount < minOpaque) return null;
 
   return {
     canvas: frameCanvas,
@@ -181,16 +158,28 @@ function cropFrame(sheet, sx, sy, frameW, frameH) {
 
 function sliceAnimations(sheet) {
   const sprites = {};
-  const sheetW = sheet.width;
-  const rowH = Math.floor(sheet.height / ROWS);
+  const cellW = Math.floor(sheet.width / GRID_COLS);
+  const cellH = Math.floor(sheet.height / GRID_ROWS);
+  // Defense: ensure we'll never slice into the label column
+  if (FIRST_FRAME_COL <= LABEL_COL) {
+    throw new Error('FIRST_FRAME_COL must be > LABEL_COL');
+  }
   for (const [name, anim] of Object.entries(ANIM)) {
-    const frameW = Math.floor(sheetW / anim.frameCount);
     const frames = [];
+    let validCount = 0;
     for (let i = 0; i < anim.frameCount; i++) {
-      frames.push(cropFrame(sheet, i * frameW, anim.rowIndex * rowH, frameW, rowH));
+      const col = FIRST_FRAME_COL + i;
+      if (col >= GRID_COLS) break; // safety
+      const sx = col * cellW;
+      const sy = anim.rowIndex * cellH;
+      const frame = cropFrame(sheet, sx, sy, cellW, cellH);
+      frames.push(frame); // may be null - picker handles
+      if (frame) validCount++;
     }
     sprites[name] = frames;
-    console.log(`[SpriteLoader] ${name}: ${anim.frameCount} frames @ ${frameW}x${rowH}`);
+    console.log(
+      `[SpriteLoader] ${name}: row ${anim.rowIndex}, ${validCount}/${frames.length} valid frames @ ${cellW}x${cellH}`
+    );
   }
   return sprites;
 }
@@ -218,7 +207,6 @@ function loadSheet() {
   });
 }
 
-// Module-level cache
 let _sprites = null;
 let _loadPromise = null;
 
@@ -251,28 +239,26 @@ export function getBillSprites() {
  *
  * Returns: { sprite, mirror, type } where:
  *   sprite: { canvas, width, height, anchorX, anchorY }
- *   mirror: true if drawBillSprite should flip horizontally (the sheet draws
+ *   mirror: true if drawBillSprite should flip horizontally (sheet draws
  *           the character facing right; mirror when facing left)
- *   type:   string tag identifying the animation, used for debugging only
+ *   type:   string tag identifying the animation, for debugging
  */
 export function pickBillFrame(unit, now) {
   if (!_sprites) return null;
   const facing = unit.direction || 1;
   const mirror = facing < 0;
 
-  // Helper: safely look up a frame, falling back through the animation if a
-  // specific frame failed sanity checks (returns null).
+  // Safe lookup: return the requested frame, or the nearest valid one if
+  // that specific cell was empty / dropped by the sanity check in cropFrame.
   const get = (animName, frameIdx) => {
     const anim = _sprites[animName];
     if (!anim || anim.length === 0) return null;
     const safeIdx = Math.max(0, Math.min(anim.length - 1, frameIdx));
     let frame = anim[safeIdx];
     if (!frame) {
-      // Walk backwards to find a valid frame
       for (let c = safeIdx; c >= 0; c--) {
         if (anim[c]) { frame = anim[c]; break; }
       }
-      // If still nothing, walk forwards
       if (!frame) {
         for (let c = safeIdx + 1; c < anim.length; c++) {
           if (anim[c]) { frame = anim[c]; break; }
@@ -282,7 +268,8 @@ export function pickBillFrame(unit, now) {
     return frame;
   };
 
-  // KNOCKED OUT - Knock Down row, 6 frames over ~700ms then hold final frame
+  // KNOCKED OUT - Knock Down row, advance through frames over ~840 ms then
+  // hold final lying-down frame for the duration of the K.O.
   if (unit.isKnockedOut) {
     if (!unit._koStartTime) unit._koStartTime = now;
     const elapsed = now - unit._koStartTime;
@@ -293,19 +280,20 @@ export function pickBillFrame(unit, now) {
     unit._koStartTime = undefined;
   }
 
-  // JUMPING - no dedicated jump row in this sheet; pick a walk frame based on
-  // vertical velocity so the legs aren't frozen mid-stride during airtime.
+  // JUMPING - dedicated row now. Pick frame by vertical velocity so the
+  // animation actually reads as launch / rise / apex / fall / land.
   if (unit.isJumping) {
     const vy = unit.velocityY || 0;
-    let walkIdx;
-    if (vy < -10) walkIdx = 1;        // launch
-    else if (vy < -3) walkIdx = 2;    // rising
-    else if (vy < 3) walkIdx = 3;     // apex
-    else walkIdx = 4;                 // falling / landing
-    return { sprite: get('WALK', walkIdx), mirror, type: 'jump' };
+    let frameIdx;
+    if (vy < -10) frameIdx = 1;        // launch
+    else if (vy < -3) frameIdx = 2;    // rising
+    else if (vy < 3) frameIdx = 3;     // apex
+    else if (vy < 10) frameIdx = 4;    // falling
+    else frameIdx = 5;                 // pre-landing
+    return { sprite: get('JUMP', frameIdx), mirror, type: 'jump' };
   }
 
-  // ATTACKING - one of Punch / Kick / Special depending on attackType
+  // ATTACKING - Punch / Kick / Special by attackType
   if (unit.isAttacking) {
     const elapsed = now - (unit.attackStartTime || now);
     const duration = unit.attackDuration || 300;
@@ -319,14 +307,14 @@ export function pickBillFrame(unit, now) {
     return { sprite: get(animName, frameIdx), mirror, type: unit.attackType || 'punch' };
   }
 
-  // WALKING - single row, mirror for facing left. Cycle ~130 ms per frame.
+  // WALKING - single row, mirror for facing left. ~130 ms / frame.
   const isMoving = Math.abs(unit.velocityX || 0) > 0.3;
   if (isMoving) {
     const frameIdx = Math.floor(now / 130) % ANIM.WALK.frameCount;
     return { sprite: get('WALK', frameIdx), mirror, type: 'walk' };
   }
 
-  // IDLE - first walk frame
+  // IDLE - hold first walk frame
   return { sprite: get('WALK', 0), mirror, type: 'idle' };
 }
 
