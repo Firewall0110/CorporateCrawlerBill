@@ -103,6 +103,12 @@ class GameRoom {
       {
         name: 'Garage',
         width: 2500,
+        // High-res rendered backdrop: the foreground drive aisle / open
+        // concrete floor occupies the bottom ~28% of the image. Push the
+        // walkable band down so Bill stands on the polished floor and
+        // doesn't appear to walk through the parked cars or the coffered
+        // concrete ceiling beams.
+        floor: { playAreaTop: 510, groundLevel: 670 },
         sections: [
           {
             name: 'Garage - Section 1',
