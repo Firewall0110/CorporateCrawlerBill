@@ -201,6 +201,12 @@ class GameRoom {
       {
         name: 'Server Room',
         width: 1500,
+        // Photoreal Cray Discovery 6 boss arena: server racks and central
+        // supercomputer occupy the back half, with a polished concrete
+        // walkable strip across the bottom ~30% of the image. Bounds give
+        // the boss fight enough vertical depth for evasion while keeping
+        // Bill and the boss visually planted on the foreground floor.
+        floor: { playAreaTop: 510, groundLevel: 685 },
         sections: [
           {
             name: 'Server Room - Boss',

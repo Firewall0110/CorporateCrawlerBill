@@ -2149,13 +2149,15 @@ function drawElevatorBank(ctx, x, y) {
 // MAIN
 // ============================================================
 const STAGES = [
-  // stage1/2/3.png are hand-curated photoreal renders placed manually into
-  // public/sprites/. Keep the procedural renderers here for reference but
-  // skip writing so this script doesn't clobber them.
+  // All four stages are now hand-curated photoreal renders placed manually
+  // into public/sprites/. The procedural renderers are kept here for
+  // reference / fallback but skipped during generation so the curated
+  // images aren't clobbered. To regenerate a stage procedurally, flip its
+  // skip flag back to false (or delete the flag).
   { name: 'stage1.png', label: 'Garage', width: 2500, render: renderGarageStage, skip: true },
   { name: 'stage2.png', label: 'Quad', width: 2500, render: renderQuadStage, skip: true },
   { name: 'stage3.png', label: 'Lobby', width: 2500, render: renderLobbyStage, skip: true },
-  { name: 'stage4.png', label: 'Server Room', width: 1500, render: renderServerRoomStage }
+  { name: 'stage4.png', label: 'Server Room', width: 1500, render: renderServerRoomStage, skip: true }
 ];
 
 console.log('Generating stage PNGs...');
