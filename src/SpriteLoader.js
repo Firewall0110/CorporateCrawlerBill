@@ -20,13 +20,14 @@
 
 const SHEET_SRC = '/sprites/BillSpriteSheet.png';
 
-const SHEET_W = 771;
-const SHEET_H = 1024;
+// Sheet is nominally 771x1024 with 5 equal-height rows of animations (so each
+// row is ~204 px tall and frame widths are derived from the row's frame count:
+// 5-frame rows → 154 px wide, 6-frame rows → 128 px wide). All dimensions are
+// read from the loaded image at runtime so the loader handles minor resize.
 const ROWS = 5;
-const ROW_HEIGHT = Math.floor(SHEET_H / ROWS); // 204
 
 // Per-row animation config. frameCount controls how the row is sliced
-// horizontally; the resulting cell width = SHEET_W / frameCount.
+// horizontally; the resulting cell width = sheet.width / frameCount.
 const ANIM = {
   WALK:    { rowIndex: 0, frameCount: 5 },
   PUNCH:   { rowIndex: 1, frameCount: 5 },
