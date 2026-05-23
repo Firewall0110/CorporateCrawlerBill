@@ -1,42 +1,48 @@
 /**
- * SpriteLoader - Loads BillSpriteSheet.png (actually JPEG) for Corporate Crawler Bill
+ * SpriteLoader - Loads BillSpriteSheet.png for Corporate Crawler Bill
  *
- * Single 880×1168 sheet, 7 rows × 8 columns, frame size 110×166.
+ * Sheet: 771x1024, 5 rows of animations with variable frame counts.
+ * Background is a uniform bright-magenta chroma-key color we strip to alpha.
  *
- * Row layout (per user spec):
- *   0: walk left   - 8 frames
- *   1: walk right  - 8 frames
- *   2: punch       - 8 frames
- *   3: kick        - 8 frames
- *   4: special     - 8 frames
- *   5: defeated/KO - 8 frames (transitions standing → lying down)
- *   6: jump        - 8 frames
+ * Row layout (top to bottom):
+ *   0: Walking              - 5 frames (single row; mirror horizontally when facing left)
+ *   1: Punching             - 5 frames
+ *   2: Kicking              - 5 frames
+ *   3: Knock Down           - 6 frames (standing → stagger → fall → lying)
+ *   4: Special Shield Bubble - 6 frames (stance → charge → bubble → release)
  *
- * Since walk_left and walk_right are separate rows, we DON'T horizontally
- * flip for movement (the rows already encode direction). For other animations
- * (punch/kick/special/etc.) we have one row only, so we flip when facing left.
+ * Each row has a small text label in the top-left corner ("Walking",
+ * "Punching", etc.). We mask that label rectangle to transparent after the
+ * chroma key so it doesn't render above the character's head.
  *
- * The file content is JPEG (gray checker baked in), so we chroma-key the
- * background to transparency via adaptive edge sampling + flood fill.
+ * There is no dedicated jump row, so jump frames fall back to the walking row.
  */
 
 const SHEET_SRC = '/sprites/BillSpriteSheet.png';
-// Sheet is 880x1168, 7 cols × 7 rows of ~125×166 cells.
-// Each row has 7 animation frames (per CCBSpritesheet2.png layout).
-const COLS = 7;
-const ROWS = 7;
 
-// Row indices match the labels on the sheet (top-to-bottom):
-//   WALK RIGHT, WALK LEFT, PUNCH, KICK, SPECIAL, JUMP, KNOCKED OUT
-const ROW_WALK_RIGHT = 0;
-const ROW_WALK_LEFT  = 1;
-const ROW_PUNCH      = 2;
-const ROW_KICK       = 3;
-const ROW_SPECIAL    = 4;
-const ROW_JUMP       = 5;
-const ROW_DEFEATED   = 6;
+const SHEET_W = 771;
+const SHEET_H = 1024;
+const ROWS = 5;
+const ROW_HEIGHT = Math.floor(SHEET_H / ROWS); // 204
 
-// ===== Chroma-key processing (adaptive edge-sampled distance) =====
+// Per-row animation config. frameCount controls how the row is sliced
+// horizontally; the resulting cell width = SHEET_W / frameCount.
+const ANIM = {
+  WALK:    { rowIndex: 0, frameCount: 5 },
+  PUNCH:   { rowIndex: 1, frameCount: 5 },
+  KICK:    { rowIndex: 2, frameCount: 5 },
+  KO:      { rowIndex: 3, frameCount: 6 },
+  SPECIAL: { rowIndex: 4, frameCount: 6 }
+};
+
+// Label region (top-left of each row) - masked to transparent after chroma key.
+// Empirically the labels occupy roughly the top 22 px and leftmost ~150 px of
+// each row. Character heads sit lower than 22 px from the row top, so masking
+// this rectangle removes the labels without clipping any character art.
+const LABEL_BOX_W = 150;
+const LABEL_BOX_H = 22;
+
+// ===== Chroma key (single dominant background color) =====
 
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -55,168 +61,104 @@ function processSheet(img) {
   const imageData = ctx.getImageData(0, 0, w, h);
   const data = imageData.data;
 
-  // FAST PATH: source PNG already has real alpha transparency (e.g. our
-  // procedurally-generated BillSpriteSheet.png). No chroma key needed -
-  // it would eat dark outline pixels by matching the transparent
-  // black (0,0,0,0) edges to character outlines like (26,14,4).
+  // FAST PATH: source already has real alpha transparency (e.g. a PNG with
+  // proper transparent background). Skip chroma key entirely to avoid eating
+  // character outline pixels.
   let alphaPixelCount = 0;
   let totalSampled = 0;
-  for (let i = 3; i < data.length; i += 4 * 100) { // sample every 100th pixel for speed
+  for (let i = 3; i < data.length; i += 4 * 100) {
     totalSampled++;
     if (data[i] < 200) alphaPixelCount++;
   }
-  const alreadyTransparent = alphaPixelCount / totalSampled > 0.15;
-  if (alreadyTransparent) {
+  if (alphaPixelCount / totalSampled > 0.15) {
     console.log('[SpriteLoader] Source has real alpha - skipping chroma key');
+    maskLabelRegions(data, w, h);
+    ctx.putImageData(imageData, 0, 0);
     return canvas;
   }
 
-  // Sample edge colors to build adaptive background palette
-  const edgeColors = [];
-  const sampleStride = 2;
-  for (let x = 0; x < w; x += sampleStride) {
-    const tIdx = x * 4;
-    edgeColors.push([data[tIdx], data[tIdx + 1], data[tIdx + 2]]);
-    const bIdx = ((h - 1) * w + x) * 4;
-    edgeColors.push([data[bIdx], data[bIdx + 1], data[bIdx + 2]]);
+  // Sample the magenta chromakey color by averaging several corner / edge
+  // points. JPEG compression jitters individual pixels ±10 RGB, so an average
+  // is more reliable than any single sample.
+  const samplePoints = [
+    [0, 0], [w - 1, 0], [0, h - 1], [w - 1, h - 1],
+    [Math.floor(w / 2), 0], [Math.floor(w / 2), h - 1],
+    [0, Math.floor(h / 2)], [w - 1, Math.floor(h / 2)]
+  ];
+  let sumR = 0, sumG = 0, sumB = 0;
+  for (const [x, y] of samplePoints) {
+    const idx = (y * w + x) * 4;
+    sumR += data[idx]; sumG += data[idx + 1]; sumB += data[idx + 2];
   }
-  for (let y = 0; y < h; y += sampleStride) {
-    const lIdx = (y * w) * 4;
-    edgeColors.push([data[lIdx], data[lIdx + 1], data[lIdx + 2]]);
-    const rIdx = (y * w + w - 1) * 4;
-    edgeColors.push([data[rIdx], data[rIdx + 1], data[rIdx + 2]]);
-  }
+  const bgR = sumR / samplePoints.length;
+  const bgG = sumG / samplePoints.length;
+  const bgB = sumB / samplePoints.length;
+  console.log(
+    `[SpriteLoader] BillSpriteSheet: ${w}x${h}, chromakey rgb(${Math.round(bgR)},${Math.round(bgG)},${Math.round(bgB)})`
+  );
 
-  // Filter to low-saturation samples (likely background, not character at edge)
-  const lowSatSamples = edgeColors.filter(([r, g, b]) => {
-    const maxC = Math.max(r, g, b);
-    const minC = Math.min(r, g, b);
-    return maxC - minC < 30;
-  });
+  // Distance threshold: magenta is far in RGB space from skin, denim, olive
+  // shirt, hair, etc. A generous threshold tolerates JPEG noise on the
+  // background without bleeding into character pixels.
+  const DIST_SQ_THRESHOLD = 60 * 60;
 
-  // Dedupe by quantization
-  const seen = new Set();
-  const palette = [];
-  const source = lowSatSamples.length >= 8 ? lowSatSamples : edgeColors;
-  for (const c of source) {
-    const key = (c[0] >> 3) * 1024 + (c[1] >> 3) * 32 + (c[2] >> 3);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    palette.push(c);
-  }
-
-  console.log(`[SpriteLoader] BillSpriteSheet: ${w}x${h}, ${edgeColors.length} edge samples → ${palette.length} unique background colors`);
-
-  // Distance matcher
-  const DIST_SQ = 40 * 40;
-  function isBackground(r, g, b) {
-    for (let i = 0; i < palette.length; i++) {
-      const c = palette[i];
-      const dr = r - c[0];
-      const dg = g - c[1];
-      const db = b - c[2];
-      if (dr * dr + dg * dg + db * db < DIST_SQ) return true;
-    }
-    return false;
-  }
-
-  // Flood fill from edges
-  const visited = new Uint8Array(w * h);
-  const stack = [];
-  for (let x = 0; x < w; x++) {
-    stack.push(x, 0);
-    stack.push(x, h - 1);
-  }
-  for (let y = 0; y < h; y++) {
-    stack.push(0, y);
-    stack.push(w - 1, y);
-  }
-
-  while (stack.length > 0) {
-    const y = stack.pop();
-    const x = stack.pop();
-    if (x < 0 || x >= w || y < 0 || y >= h) continue;
-    const ptr = y * w + x;
-    if (visited[ptr]) continue;
-    visited[ptr] = 1;
-    const idx = ptr * 4;
-    if (!isBackground(data[idx], data[idx + 1], data[idx + 2])) continue;
-    data[idx + 3] = 0;
-    stack.push(x + 1, y);
-    stack.push(x - 1, y);
-    stack.push(x, y + 1);
-    stack.push(x, y - 1);
-  }
-
-  // Snapshot-based noise filter
-  const snapshotAlpha = new Uint8Array(w * h);
-  for (let i = 0; i < w * h; i++) {
-    snapshotAlpha[i] = data[i * 4 + 3];
-  }
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const ptr = y * w + x;
-      if (snapshotAlpha[ptr] === 0) continue;
-      let opaqueNeighbors = 0;
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const nx = x + dx;
-          const ny = y + dy;
-          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-          if (snapshotAlpha[ny * w + nx] > 0) opaqueNeighbors++;
-        }
-      }
-      if (opaqueNeighbors < 3) {
-        data[ptr * 4 + 3] = 0;
-      }
+  let removed = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    const dr = data[i] - bgR;
+    const dg = data[i + 1] - bgG;
+    const db = data[i + 2] - bgB;
+    if (dr * dr + dg * dg + db * db < DIST_SQ_THRESHOLD) {
+      data[i + 3] = 0;
+      removed++;
     }
   }
 
-  // Validate
-  let transparentCount = 0;
-  for (let i = 0; i < w * h; i++) {
-    if (data[i * 4 + 3] === 0) transparentCount++;
-  }
-  const transparentRatio = transparentCount / (w * h);
-  console.log(`[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after processing`);
-
+  const transparentRatio = removed / (w * h);
+  console.log(
+    `[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after chroma key`
+  );
   if (transparentRatio < 0.20) {
     throw new Error(`Chroma key failed: only ${(transparentRatio * 100).toFixed(1)}% transparent`);
   }
+
+  // Wipe out per-row text labels ("Walking", "Punching", ...) that survive the
+  // chroma key because they're dark pixels on magenta. They sit in the
+  // top-left of each row and would otherwise float above the character's head
+  // when a frame is drawn.
+  maskLabelRegions(data, w, h);
 
   ctx.putImageData(imageData, 0, 0);
   return canvas;
 }
 
-// ===== Frame slicing with tight bbox cropping =====
+function maskLabelRegions(data, w, h) {
+  const rowH = Math.floor(h / ROWS);
+  for (let r = 0; r < ROWS; r++) {
+    const y0 = r * rowH;
+    const yEnd = Math.min(y0 + LABEL_BOX_H, h);
+    const xEnd = Math.min(LABEL_BOX_W, w);
+    for (let y = y0; y < yEnd; y++) {
+      const rowOffset = y * w;
+      for (let x = 0; x < xEnd; x++) {
+        data[(rowOffset + x) * 4 + 3] = 0;
+      }
+    }
+  }
+}
 
-function cropFrame(sheet, col, row, frameW, frameH) {
-  // Extract the FULL cell, no tight-bbox cropping.
-  //
-  // Previously we picked the largest connected non-transparent component and
-  // bbox-cropped to it. That made walk/punch frames crop ~90×140 (just the
-  // body), but SPECIAL frames late in the animation crop ~250×250 (the
-  // energy ball dominates the cell). Rendering each at native pixel scale
-  // then produced wildly different on-screen sizes across the 7 frames,
-  // even though the sheet draws the body at a consistent size in every cell.
-  //
-  // The sheet's cell grid is uniform: body's feet are at the bottom of the
-  // cell, body is roughly horizontally centered, FX extends into the cell's
-  // padding. Rendering the whole cell keeps the body locked in place and
-  // lets FX appear at its drawn size relative to the body — exactly as the
-  // artist authored it.
+// ===== Frame slicing =====
+
+function cropFrame(sheet, sx, sy, frameW, frameH) {
   const frameCanvas = document.createElement('canvas');
   frameCanvas.width = frameW;
   frameCanvas.height = frameH;
   const frameCtx = frameCanvas.getContext('2d');
   frameCtx.imageSmoothingEnabled = false;
-  frameCtx.drawImage(sheet,
-    col * frameW, row * frameH, frameW, frameH,
-    0, 0, frameW, frameH);
+  frameCtx.drawImage(sheet, sx, sy, frameW, frameH, 0, 0, frameW, frameH);
 
-  // Sanity check: bail if the cell is essentially empty (helps catch sheet
-  // dimension mismatches early instead of rendering invisible frames).
+  // Sanity check: if the cell is essentially empty (no character art), return
+  // null so the picker can fall back to an adjacent frame instead of drawing
+  // an invisible sprite.
   const data = frameCtx.getImageData(0, 0, frameW, frameH).data;
   let opaqueCount = 0;
   for (let i = 3; i < data.length; i += 4) {
@@ -236,6 +178,22 @@ function cropFrame(sheet, col, row, frameW, frameH) {
   };
 }
 
+function sliceAnimations(sheet) {
+  const sprites = {};
+  const sheetW = sheet.width;
+  const rowH = Math.floor(sheet.height / ROWS);
+  for (const [name, anim] of Object.entries(ANIM)) {
+    const frameW = Math.floor(sheetW / anim.frameCount);
+    const frames = [];
+    for (let i = 0; i < anim.frameCount; i++) {
+      frames.push(cropFrame(sheet, i * frameW, anim.rowIndex * rowH, frameW, rowH));
+    }
+    sprites[name] = frames;
+    console.log(`[SpriteLoader] ${name}: ${anim.frameCount} frames @ ${frameW}x${rowH}`);
+  }
+  return sprites;
+}
+
 // ===== Loader =====
 
 function loadSheet() {
@@ -244,20 +202,8 @@ function loadSheet() {
     img.onload = () => {
       try {
         const processed = processSheet(img);
-        const frameW = Math.floor(processed.width / COLS);
-        const frameH = Math.floor(processed.height / ROWS);
-
-        // Slice into rows of frames
-        const rows = [];
-        for (let r = 0; r < ROWS; r++) {
-          const rowFrames = [];
-          for (let c = 0; c < COLS; c++) {
-            rowFrames.push(cropFrame(processed, c, r, frameW, frameH));
-          }
-          rows.push(rowFrames);
-        }
-        console.log(`[SpriteLoader] BillSpriteSheet: sliced ${ROWS} rows x ${COLS} cols (${frameW}x${frameH} per cell)`);
-        resolve(rows);
+        const sprites = sliceAnimations(processed);
+        resolve(sprites);
       } catch (err) {
         console.error('[SpriteLoader] BillSpriteSheet failed:', err.message);
         reject(err);
@@ -272,21 +218,21 @@ function loadSheet() {
 }
 
 // Module-level cache
-let _rows = null;
+let _sprites = null;
 let _loadPromise = null;
 
 export function loadBillSprites() {
-  if (_rows) return Promise.resolve(_rows);
+  if (_sprites) return Promise.resolve(_sprites);
   if (_loadPromise) return _loadPromise;
 
-  _loadPromise = loadSheet().then(rows => {
-    _rows = rows;
+  _loadPromise = loadSheet().then(sprites => {
+    _sprites = sprites;
     console.log('[SpriteLoader] Bill sprites loaded successfully');
-    return _rows;
+    return _sprites;
   }).catch(err => {
     console.error('[SpriteLoader] Bill sprites failed to load:', err);
     _loadPromise = null;
-    _rows = null;
+    _sprites = null;
     throw err;
   });
 
@@ -294,87 +240,93 @@ export function loadBillSprites() {
 }
 
 export function getBillSprites() {
-  return _rows;
+  return _sprites;
 }
+
+// ===== Frame selection =====
 
 /**
  * Pick which sprite frame to draw based on unit state and current time.
  *
- * Returns: { sprite: {canvas, width, height, anchorX, anchorY}, mirror: bool, type: string }
- *  - mirror: if true, drawBillSprite should flip horizontally. We only mirror for
- *    non-walk animations (which have a single row); walk left/right have separate rows.
+ * Returns: { sprite, mirror, type } where:
+ *   sprite: { canvas, width, height, anchorX, anchorY }
+ *   mirror: true if drawBillSprite should flip horizontally (the sheet draws
+ *           the character facing right; mirror when facing left)
+ *   type:   string tag identifying the animation, used for debugging only
  */
 export function pickBillFrame(unit, now) {
-  if (!_rows) return null;
+  if (!_sprites) return null;
   const facing = unit.direction || 1;
+  const mirror = facing < 0;
 
-  // Helper: safely get a frame, falling back through animation if specific frame is missing
-  const get = (row, col) => {
-    if (!_rows[row]) return null;
-    let frame = _rows[row][col];
+  // Helper: safely look up a frame, falling back through the animation if a
+  // specific frame failed sanity checks (returns null).
+  const get = (animName, frameIdx) => {
+    const anim = _sprites[animName];
+    if (!anim || anim.length === 0) return null;
+    const safeIdx = Math.max(0, Math.min(anim.length - 1, frameIdx));
+    let frame = anim[safeIdx];
     if (!frame) {
-      // Walk backwards in the row for a valid frame
-      for (let c = col; c >= 0; c--) {
-        if (_rows[row][c]) { frame = _rows[row][c]; break; }
+      // Walk backwards to find a valid frame
+      for (let c = safeIdx; c >= 0; c--) {
+        if (anim[c]) { frame = anim[c]; break; }
+      }
+      // If still nothing, walk forwards
+      if (!frame) {
+        for (let c = safeIdx + 1; c < anim.length; c++) {
+          if (anim[c]) { frame = anim[c]; break; }
+        }
       }
     }
     return frame;
   };
 
-  // KNOCKED OUT - row 6, progresses through stagger -> fall -> lying
-  // Frame layout in this sheet:
-  //   0: stagger/recoil   1: stars burst (impact)   2: dizzy/standing
-  //   3-6: lying on ground (final rest pose held)
+  // KNOCKED OUT - Knock Down row, 6 frames over ~700ms then hold final frame
   if (unit.isKnockedOut) {
     if (!unit._koStartTime) unit._koStartTime = now;
-    const koElapsed = now - unit._koStartTime;
-    // Play through all 7 frames over ~700ms, then hold on last (lying)
-    const frameIdx = Math.min(COLS - 1, Math.floor(koElapsed / 100));
-    return { sprite: get(ROW_DEFEATED, frameIdx), mirror: facing < 0, type: 'defeated' };
+    const elapsed = now - unit._koStartTime;
+    const koFrames = ANIM.KO.frameCount;
+    const frameIdx = Math.min(koFrames - 1, Math.floor(elapsed / 120));
+    return { sprite: get('KO', frameIdx), mirror, type: 'defeated' };
   } else if (unit._koStartTime) {
     unit._koStartTime = undefined;
   }
 
-  // JUMPING - row 5 (jump)
-  // Frame layout: 0=stance/crouch, 1=launch, 2-3=apex/rising, 4=falling, 5-6=landing
+  // JUMPING - no dedicated jump row in this sheet; pick a walk frame based on
+  // vertical velocity so the legs aren't frozen mid-stride during airtime.
   if (unit.isJumping) {
     const vy = unit.velocityY || 0;
-    let frameIdx;
-    if (vy < -10) frameIdx = 1;       // launch
-    else if (vy < -3) frameIdx = 2;   // rising
-    else if (vy < 3) frameIdx = 3;    // apex
-    else if (vy < 10) frameIdx = 4;   // falling
-    else frameIdx = 5;                // descending fast / pre-land
-    return { sprite: get(ROW_JUMP, frameIdx), mirror: facing < 0, type: 'jump' };
+    let walkIdx;
+    if (vy < -10) walkIdx = 1;        // launch
+    else if (vy < -3) walkIdx = 2;    // rising
+    else if (vy < 3) walkIdx = 3;     // apex
+    else walkIdx = 4;                 // falling / landing
+    return { sprite: get('WALK', walkIdx), mirror, type: 'jump' };
   }
 
-  // ATTACKING - 7 frames per attack animation
+  // ATTACKING - one of Punch / Kick / Special depending on attackType
   if (unit.isAttacking) {
     const elapsed = now - (unit.attackStartTime || now);
     const duration = unit.attackDuration || 300;
     const progress = Math.min(0.999, elapsed / duration);
-    const frameIdx = Math.min(COLS - 1, Math.floor(progress * COLS));
-
-    let row;
-    if (unit.attackType === 'kick') row = ROW_KICK;
-    else if (unit.attackType === 'special') row = ROW_SPECIAL;
-    else row = ROW_PUNCH;
-
-    return { sprite: get(row, frameIdx), mirror: facing < 0, type: unit.attackType || 'punch' };
+    let animName;
+    if (unit.attackType === 'kick') animName = 'KICK';
+    else if (unit.attackType === 'special') animName = 'SPECIAL';
+    else animName = 'PUNCH';
+    const frames = ANIM[animName].frameCount;
+    const frameIdx = Math.min(frames - 1, Math.floor(progress * frames));
+    return { sprite: get(animName, frameIdx), mirror, type: unit.attackType || 'punch' };
   }
 
-  // WALKING - direction-specific row, no horizontal mirror needed
-  // (sheet has separate WALK_RIGHT and WALK_LEFT rows)
+  // WALKING - single row, mirror for facing left. Cycle ~130 ms per frame.
   const isMoving = Math.abs(unit.velocityX || 0) > 0.3;
   if (isMoving) {
-    const frameIdx = Math.floor(now / 130) % COLS;
-    const row = facing > 0 ? ROW_WALK_RIGHT : ROW_WALK_LEFT;
-    return { sprite: get(row, frameIdx), mirror: false, type: 'walk' };
+    const frameIdx = Math.floor(now / 130) % ANIM.WALK.frameCount;
+    return { sprite: get('WALK', frameIdx), mirror, type: 'walk' };
   }
 
-  // IDLE - first frame of facing-appropriate walk row
-  const idleRow = facing > 0 ? ROW_WALK_RIGHT : ROW_WALK_LEFT;
-  return { sprite: get(idleRow, 0), mirror: false, type: 'idle' };
+  // IDLE - first walk frame
+  return { sprite: get('WALK', 0), mirror, type: 'idle' };
 }
 
 const SpriteLoaderModule = { loadBillSprites, getBillSprites, pickBillFrame };

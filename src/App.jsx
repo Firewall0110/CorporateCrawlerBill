@@ -1822,11 +1822,10 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
 function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
   const sprite = frame.sprite;
   // Render each frame at its native source pixel dimensions. The SpriteLoader
-  // now returns full cells (~125×166) instead of bbox-cropped sub-regions,
-  // so every frame has the SAME canvas dimensions and the body sits in the
-  // SAME position within the cell. FX (special's energy ball, kick's wind
-  // streaks) appear at the relative size the artist drew them without
-  // distorting the body's on-screen size or position.
+  // returns full cells (variable width per row in the new sheet, e.g. 154 px
+  // for the 5-frame walk row, 128 px for the 6-frame KO row) so the body sits
+  // in a consistent position within each cell. FX (special's bubble, kick's
+  // motion lines) appear at the relative size the artist drew them.
   const SPRITE_SCALE = 1.0;
   const drawW = sprite.canvas.width * SPRITE_SCALE;
   const drawH = sprite.canvas.height * SPRITE_SCALE;
@@ -1835,8 +1834,8 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   const drawX = cx - drawW / 2;
   const drawY = feetY - drawH + bobAmount;
 
-  // The sheet has separate walk-left / walk-right rows; for those, frame.mirror=false
-  // For other anims (punch/kick/etc.) only one direction is drawn, so we flip when facing left
+  // The sheet draws every character facing right; the SpriteLoader sets
+  // frame.mirror=true whenever the unit is facing left so we flip the draw.
   const shouldMirror = !!frame.mirror;
 
   ctx.save();
