@@ -136,6 +136,12 @@ class GameRoom {
       {
         name: 'Quad',
         width: 2500,
+        // High-res rendered corporate quad backdrop: stone pavement strip
+        // runs along the bottom ~17% of the image (with the planter beds,
+        // sculpture and office buildings behind it). Push the walk band
+        // down so Bill stays on pavement and doesn't appear to walk through
+        // the flower beds, sculpture or the buildings beyond.
+        floor: { playAreaTop: 575, groundLevel: 680 },
         sections: [
           {
             name: 'Quad - Section 1',
