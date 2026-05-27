@@ -9,3 +9,9 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+
+# Persistent leaderboard JSON file (lives at data/leaderboard.json by default
+# or wherever LEADERBOARD_PATH points). Don't commit the data itself - on
+# Railway this should live on a mounted Volume so it survives redeploys.
+data/leaderboard.json
+data/leaderboard.json.tmp

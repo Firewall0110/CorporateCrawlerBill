@@ -3,6 +3,7 @@ const http = require('http');
 const socketIo = require('socket.io');
 const path = require('path');
 const GameRoom = require('./GameRoom');
+const Leaderboard = require('./db/Leaderboard');
 
 const app = express();
 const server = http.createServer(app);
@@ -50,6 +51,35 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
   res.sendFile(path.join(buildPath, 'index.html'));
 });
 
+/**
+ * Persistent-leaderboard Query #1 (per session):
+ * Look up the player by case-insensitive name (creating a zeroed row if
+ * unseen) and compute their starting luck. The result is merged into
+ * playerData before calling room.addPlayer so the Player object gets its
+ * luck and starts ticking session stats from zero. This is the ONLY DB
+ * read we do per session - we don't refresh mid-game.
+ */
+function resolvePlayerLuck(playerData) {
+  const name = (playerData && playerData.name) ? String(playerData.name).trim() : '';
+  if (!name) {
+    return { ...playerData, luck: 0, lifetimeTickets: 0, isNewPlayer: true };
+  }
+  try {
+    const row = Leaderboard.getOrCreatePlayer(name);
+    const luck = Leaderboard.computeLuck(row.ticketsKilled);
+    console.log(`[Leaderboard] ${name} (lifetime tickets=${row.ticketsKilled}, luck=${luck}${row.isNew ? ', NEW' : ''})`);
+    return {
+      ...playerData,
+      luck,
+      lifetimeTickets: row.ticketsKilled,
+      isNewPlayer: !!row.isNew
+    };
+  } catch (err) {
+    console.error('[Leaderboard] lookup failed for', name, '-', err.message);
+    return { ...playerData, luck: 0, lifetimeTickets: 0, isNewPlayer: false };
+  }
+}
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log(`Player connected: ${socket.id}`);
@@ -59,42 +89,48 @@ io.on('connection', (socket) => {
     const roomId = generateRoomId();
     const room = new GameRoom(roomId, roomName, io);
     gameRooms.set(roomId, room);
-    
+
     socket.join(roomId);
-    room.addPlayer(socket.id, playerData);
-    
-    socket.emit('roomCreated', { 
-      roomId, 
+    const enriched = resolvePlayerLuck(playerData);
+    room.addPlayer(socket.id, enriched);
+
+    socket.emit('roomCreated', {
+      roomId,
       playerId: socket.id,
-      gameState: room.getState()
+      gameState: room.getState(),
+      lifetimeTickets: enriched.lifetimeTickets,
+      luck: enriched.luck
     });
-    
+
     console.log(`Room created: ${roomId} by ${socket.id}`);
   });
 
   // Join an existing room
   socket.on('joinRoom', ({ roomId, playerData }) => {
     const room = gameRooms.get(roomId);
-    
+
     if (!room) {
       socket.emit('error', { message: 'Room not found' });
       return;
     }
-    
+
     if (room.getPlayerCount() >= MAX_PLAYERS_PER_ROOM) {
       socket.emit('error', { message: 'Room is full' });
       return;
     }
-    
+
     socket.join(roomId);
-    room.addPlayer(socket.id, playerData);
-    
-    socket.emit('roomJoined', { 
-      roomId, 
+    const enriched = resolvePlayerLuck(playerData);
+    room.addPlayer(socket.id, enriched);
+
+    socket.emit('roomJoined', {
+      roomId,
       playerId: socket.id,
-      gameState: room.getState()
+      gameState: room.getState(),
+      lifetimeTickets: enriched.lifetimeTickets,
+      luck: enriched.luck
     });
-    
+
     console.log(`Player ${socket.id} joined room ${roomId}`);
   });
 

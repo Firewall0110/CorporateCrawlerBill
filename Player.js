@@ -6,7 +6,7 @@ const Unit = require('./Unit');
  */
 
 class Player extends Unit {
-  constructor(socketId, name, color, characterAttributes = []) {
+  constructor(socketId, name, color, characterAttributes = [], opts = {}) {
     // Base stats for players
     const playerBaseStats = {
       maxHealth: 500,
@@ -25,6 +25,21 @@ class Player extends Unit {
     // Character attributes this player brings to the game
     // Each attribute is { name, description, modifier: { target, value, appliesToTeam } }
     this.attributes = characterAttributes;
+
+    // Persistent-leaderboard plumbing
+    //   luck:         tier-roll bonus (0-99), set once at room-join from the
+    //                 player's lifetime ticket count. Passed to
+    //                 rollAttributeChoices() so the pick screen reflects it.
+    //   sessionStats: kills accumulated during THIS run. Submitted to the
+    //                 leaderboard DB on game end (boss death or disconnect).
+    //   _dbSubmitted: guards against double-submitting the same session.
+    this.luck = Math.max(0, Math.min(99, Math.floor(opts.luck || 0)));
+    this.sessionStats = {
+      ticketsKilled: 0,
+      bossesDefeated: 0,
+      crawlsCompleted: 0
+    };
+    this._dbSubmitted = false;
 
     // Input state
     this.currentInput = {

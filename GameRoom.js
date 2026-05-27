@@ -2,6 +2,7 @@ const Player = require('./Player');
 const Enemy = require('./Enemy');
 const Boss = require('./Boss');
 const { rollAttributeChoices, instantiateAttribute } = require('./CharacterAttributes');
+const Leaderboard = require('./db/Leaderboard');
 
 // Debug flag - set to true for verbose logging
 const DEBUG = process.env.DEBUG === 'true';
@@ -382,6 +383,12 @@ class GameRoom {
     deadEnemies.forEach(enemy => {
       this.totalKills++;
       debugLog(`[Kill] #${this.totalKills}: ${enemy.name}`);
+      // Co-op credit: every player in the room gets +1 ticket toward their
+      // lifetime stat for each downed mook. Submitted to the leaderboard
+      // when the session ends (boss death or disconnect).
+      this.players.forEach(player => {
+        player.sessionStats.ticketsKilled++;
+      });
     });
     this.enemies = this.enemies.filter(enemy => !enemy.isKnockedOut || enemy.health > 0);
 
@@ -842,6 +849,22 @@ class GameRoom {
     if (this.status === 'finished') return; // idempotent
 
     this.status = 'finished';
+
+    // Credit every player with the boss kill + crawl completion before we
+    // submit, so the persistent stats reflect the win.
+    this.players.forEach(player => {
+      player.sessionStats.bossesDefeated += 1;
+      player.sessionStats.crawlsCompleted += 1;
+    });
+
+    // Submit each player's session to the leaderboard. This is Query #2 -
+    // see Leaderboard.js for the 2-query contract. We emit a per-socket
+    // 'statsSubmitted' so the client can show the leaderboard screen after
+    // the retirement splash.
+    this.players.forEach(player => {
+      this.submitPlayerStats(player);
+    });
+
     this.io.to(this.id).emit('levelComplete', {
       message: 'You defeated the Critical Priority 1 Outage!'
     });
@@ -854,6 +877,34 @@ class GameRoom {
         this.gameLoop = null;
       }
     }, 500);
+  }
+
+  /**
+   * Submit a single player's session stats to the persistent leaderboard
+   * and emit the updated totals + top-N back to that player's socket.
+   * Idempotent per player via the _dbSubmitted flag - safe to call from
+   * both levelComplete and removePlayer (disconnect).
+   */
+  submitPlayerStats(player) {
+    if (!player || player._dbSubmitted) return;
+    player._dbSubmitted = true;
+    try {
+      const result = Leaderboard.submitSession(player.name, player.sessionStats);
+      if (result) {
+        this.io.to(player.id).emit('statsSubmitted', {
+          name: result.player.displayName,
+          previousTickets: result.previousTotals.previousTickets,
+          newTickets: result.player.ticketsKilled,
+          newBosses: result.player.bossesDefeated,
+          newCrawls: result.player.crawlsCompleted,
+          sessionStats: player.sessionStats,
+          leaderboard: result.leaderboard,
+          globalStats: result.globalStats
+        });
+      }
+    } catch (err) {
+      console.error('[GameRoom] Failed to submit player stats:', err.message);
+    }
   }
 
   /**
@@ -870,13 +921,18 @@ class GameRoom {
    * Players start with NO attributes - they pick one from a tier-rolled set
    * of 3 choices via the on-screen modal (offerAttributeChoices below). They
    * get another choice at the start of every stage. Attributes stack.
+   *
+   * playerData may include { luck } pre-computed from the persistent
+   * leaderboard at the server's createRoom/joinRoom handler. We stash it on
+   * the Player and pass it to every attribute roll for this session.
    */
   addPlayer(socketId, playerData) {
     const player = new Player(
       socketId,
       playerData.name || `Player ${this.players.size + 1}`,
       playerData.color || this.getRandomColor(),
-      [] // start empty - the picker modal will populate this
+      [], // start empty - the picker modal will populate this
+      { luck: playerData.luck || 0 }
     );
 
     // Set initial position spread - mid play-area depth so they're visible
@@ -920,10 +976,13 @@ class GameRoom {
    * tweak modal styling (e.g. show "Stage N start!" header for stage rolls).
    */
   offerAttributeChoices(socketId, reason = 'stage-start') {
-    const choices = rollAttributeChoices(3);
+    const player = this.players.get(socketId);
+    const luck = player?.luck || 0;
+    const choices = rollAttributeChoices(3, luck);
     this.io.to(socketId).emit('attributeChoicesOffered', {
       choices,
       reason,
+      luck, // shown in the modal header so the player sees their luck working
       stageName: this.zoneConfig[this.currentZoneIndex]?.name || ''
     });
   }
@@ -954,6 +1013,11 @@ class GameRoom {
     this.players.delete(socketId);
 
     if (player) {
+      // Submit whatever session progress they had before they vanished. The
+      // submitPlayerStats guard makes this a no-op if they already submitted
+      // via levelComplete (e.g. boss defeated then player closes the tab).
+      this.submitPlayerStats(player);
+
       // Recompute effective stats with player removed
       this.recomputeAllEffectiveStats();
 

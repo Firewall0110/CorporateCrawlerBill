@@ -264,44 +264,64 @@ const ATTRIBUTES = {
 // ===== Rolling / instantiation =====
 
 /**
- * Roll a single tier weighted by RARITY_WEIGHTS.
+ * Roll a single tier with optional `luck` modifier (0-99).
+ *
+ * Mechanism:
+ *   1. Roll a 1-100 integer.
+ *   2. Subtract `luck` and floor at 1 -> "adjusted roll".
+ *   3. Map adjusted roll to a tier using RARITY_WEIGHTS as cumulative
+ *      thresholds, ordered RAREST FIRST. So adjusted roll 1 = celestial,
+ *      2-4 = mythic, 5-10 = legendary, 11-20 = epic, 21-35 = rare,
+ *      36-60 = uncommon, 61-100 = common.
+ *
+ * Luck curve (set by Leaderboard.computeLuck):
+ *   luck = min(99, floor(ticketsLifetime / 10))
+ *   - 0 tickets  -> luck 0  -> base 1% celestial
+ *   - 100 tickets -> luck 10 -> 11% celestial chance
+ *   - 500 tickets -> luck 50 -> 51% celestial
+ *   - 990 tickets -> luck 99 -> 100% celestial (the cap)
+ *
+ * Edge cases:
+ *   - luck 99 + max roll 100 = 1 (always celestial).
+ *   - luck 0 + any roll matches the base distribution exactly.
  */
-function rollTier() {
-  const total = Object.values(RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
-  let r = Math.random() * total;
-  for (const tier of RARITIES) {
-    r -= RARITY_WEIGHTS[tier];
-    if (r <= 0) return tier;
+const RARITIES_RAREST_FIRST = ['celestial', 'mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];
+function rollTier(luck = 0) {
+  const clampedLuck = Math.min(99, Math.max(0, Math.floor(luck) || 0));
+  const rawRoll = Math.floor(Math.random() * 100) + 1;        // 1-100
+  const adjustedRoll = Math.max(1, rawRoll - clampedLuck);    // shift toward celestial
+  let cumulative = 0;
+  for (const tier of RARITIES_RAREST_FIRST) {
+    cumulative += RARITY_WEIGHTS[tier];
+    if (adjustedRoll <= cumulative) return tier;
   }
-  return 'common'; // fallback
+  return 'common'; // unreachable; safety
 }
 
 /**
- * Roll a single (key, tier) pair. Each attribute key is equally weighted; the
- * tier is rolled independently with RARITY_WEIGHTS.
+ * Roll a single (key, tier) pair with luck.
  */
-function rollOneChoice() {
+function rollOneChoice(luck = 0) {
   const keys = Object.keys(ATTRIBUTES);
   const key = keys[Math.floor(Math.random() * keys.length)];
-  const tier = rollTier();
+  const tier = rollTier(luck);
   return { key, tier };
 }
 
 /**
- * Roll `count` distinct (key, tier) pairs - by attribute key, so a player
- * can't be offered the same attribute twice in one selection screen. Tiers
- * can repeat across the slots.
+ * Roll `count` distinct (key, tier) pairs. Distinct by attribute KEY so the
+ * picker never offers the same attribute twice in one screen; tiers can
+ * repeat across slots. `luck` is passed through to each tier roll.
  */
-function rollAttributeChoices(count = 3) {
+function rollAttributeChoices(count = 3, luck = 0) {
   const keys = Object.keys(ATTRIBUTES);
   const picked = new Set();
   const choices = [];
-  // Defensive: if more choices requested than attributes exist, cap.
   const limit = Math.min(count, keys.length);
   let safety = 0;
   while (choices.length < limit && safety < 200) {
     safety++;
-    const { key, tier } = rollOneChoice();
+    const { key, tier } = rollOneChoice(luck);
     if (picked.has(key)) continue;
     picked.add(key);
     choices.push(buildOfferedChoice(key, tier));

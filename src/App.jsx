@@ -146,12 +146,17 @@ const ActionButton = ({
  * The card border, glow, and tier label all share the tier's color so the
  * rarity reads instantly. Hover shimmer for tactile feedback.
  */
-const AttributePickerModal = ({ choices, reason, stageName, onPick }) => {
+const AttributePickerModal = ({ choices, reason, stageName, luck, onPick }) => {
   if (!choices || choices.length === 0) return null;
 
   const headline = reason === 'game-start'
     ? 'PICK YOUR FIRST ATTRIBUTE'
     : `STAGE START: ${stageName?.toUpperCase() || ''}  -  PICK AN ATTRIBUTE`;
+  // Luck readout - shows "LUCK +N" when the player has any. Hint that more
+  // tickets = better rolls in future runs.
+  const luckHint = typeof luck === 'number' && luck > 0
+    ? `LUCK +${luck}  (rarer tiers more likely)`
+    : null;
 
   return (
     <div style={{
@@ -169,11 +174,23 @@ const AttributePickerModal = ({ choices, reason, stageName, onPick }) => {
         fontSize: 14,
         color: '#00ffff',
         textShadow: '0 0 10px #00ffff',
-        marginBottom: 24,
+        marginBottom: luckHint ? 8 : 24,
         textAlign: 'center'
       }}>
         {headline}
       </div>
+      {luckHint && (
+        <div style={{
+          fontSize: 9,
+          color: '#33ff66',
+          textShadow: '0 0 6px #33ff66',
+          marginBottom: 24,
+          textAlign: 'center',
+          letterSpacing: 1
+        }}>
+          {luckHint}
+        </div>
+      )}
       <div style={{
         display: 'flex',
         gap: 24,
@@ -643,7 +660,7 @@ const MobileControls = ({ keysPressed, cooldownsRef }) => {
  * this point) doesn't keep rendering stale frames. Animated with CSS
  * keyframes for confetti, pulsing glow, rainbow text, and blinking subtitle.
  */
-const VictoryScreen = ({ onBackToMenu }) => {
+const VictoryScreen = ({ onBackToMenu, onAdvance, advanceLabel }) => {
   // Generate confetti pieces once at mount
   const confetti = React.useMemo(() => {
     const colors = ['#ff3344', '#ffaa22', '#ffee33', '#33ff66', '#33ccff', '#aa55ff', '#ff44cc'];
@@ -815,9 +832,10 @@ const VictoryScreen = ({ onBackToMenu }) => {
           </p>
         </div>
 
-        {/* Back to menu */}
+        {/* Primary action button - either advances to leaderboard screen
+            (when onAdvance is provided) or goes straight back to menu. */}
         <button
-          onClick={onBackToMenu}
+          onClick={onAdvance || onBackToMenu}
           style={{
             marginTop: '60px',
             padding: '20px 50px',
@@ -839,7 +857,7 @@ const VictoryScreen = ({ onBackToMenu }) => {
           onMouseDown={(e) => { e.target.style.transform = 'translateY(2px)'; }}
           onMouseUp={(e) => { e.target.style.transform = 'scale(1.05)'; }}
         >
-          ▶ BACK TO MENU
+          {advanceLabel || '▶ BACK TO MENU'}
         </button>
 
         {/* Bottom corner credit */}
@@ -859,6 +877,164 @@ const VictoryScreen = ({ onBackToMenu }) => {
   );
 };
 
+/**
+ * LeaderboardScreen - shown after VictoryScreen, lists the player's session
+ * stats (with previous-vs-new ticket count), the global counters
+ * ("how many crawls completed across all players", etc.) and the top-10
+ * lifetime tickets leaderboard. The player's own row is highlighted.
+ */
+const LeaderboardScreen = ({ payload, onBackToMenu }) => {
+  // Safe access if payload is missing - just show a graceful "no stats yet"
+  const sessionStats = payload?.sessionStats || { ticketsKilled: 0, bossesDefeated: 0, crawlsCompleted: 0 };
+  const previousTickets = payload?.previousTickets ?? 0;
+  const newTickets = payload?.newTickets ?? 0;
+  const playerName = payload?.name || '';
+  const leaderboard = payload?.leaderboard || [];
+  const globalStats = payload?.globalStats || { totalTickets: 0, totalBosses: 0, totalCrawls: 0, playersCompleted: 0 };
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'linear-gradient(180deg, #0a0024 0%, #1a0040 50%, #0a0024 100%)',
+      overflow: 'auto',
+      padding: '40px 20px',
+      fontFamily: '"Press Start 2P", monospace',
+      color: '#eee',
+      zIndex: 1000
+    }}>
+      <div style={{ maxWidth: 760, margin: '0 auto' }}>
+
+        {/* Header */}
+        <h1 style={{
+          textAlign: 'center',
+          fontSize: 'clamp(20px, 3vw, 32px)',
+          color: '#ffee33',
+          textShadow: '0 0 16px #ff8800',
+          margin: '0 0 30px 0'
+        }}>
+          ★ LEADERBOARD ★
+        </h1>
+
+        {/* This run's session stats */}
+        <div style={{
+          background: 'rgba(0, 255, 255, 0.07)',
+          border: '2px solid #00ffff',
+          padding: 20,
+          marginBottom: 24
+        }}>
+          <div style={{ fontSize: 11, color: '#00ffff', marginBottom: 12 }}>
+            THIS RUN - {playerName}
+          </div>
+          <Row label="Tickets closed" value={sessionStats.ticketsKilled} />
+          <Row label="Bosses defeated" value={sessionStats.bossesDefeated} />
+          <Row label="Crawls completed" value={sessionStats.crawlsCompleted} />
+        </div>
+
+        {/* Lifetime totals - shows previous -> new */}
+        <div style={{
+          background: 'rgba(255, 238, 51, 0.06)',
+          border: '2px solid #ffee33',
+          padding: 20,
+          marginBottom: 24
+        }}>
+          <div style={{ fontSize: 11, color: '#ffee33', marginBottom: 12 }}>
+            LIFETIME TOTAL - {playerName}
+          </div>
+          <Row
+            label="Tickets closed"
+            value={
+              <span>
+                <span style={{ opacity: 0.5 }}>{previousTickets}</span>
+                <span style={{ color: '#33ff66' }}> → {newTickets}</span>
+              </span>
+            }
+          />
+          <Row label="Bosses beaten" value={payload?.newBosses ?? 0} />
+          <Row label="Crawls completed" value={payload?.newCrawls ?? 0} />
+        </div>
+
+        {/* Global aggregates */}
+        <div style={{
+          background: 'rgba(170, 85, 255, 0.06)',
+          border: '2px solid #aa55ff',
+          padding: 20,
+          marginBottom: 24
+        }}>
+          <div style={{ fontSize: 11, color: '#aa55ff', marginBottom: 12 }}>
+            ALL-TIME GLOBAL STATS
+          </div>
+          <Row label="People who completed the crawl" value={globalStats.playersCompleted} />
+          <Row label="Tickets defeated (total)" value={globalStats.totalTickets} />
+          <Row label="Bosses defeated (total)" value={globalStats.totalBosses} />
+        </div>
+
+        {/* Top-10 leaderboard */}
+        <div style={{
+          background: 'rgba(255, 255, 255, 0.04)',
+          border: '2px solid #ffffff',
+          padding: 20,
+          marginBottom: 32
+        }}>
+          <div style={{ fontSize: 11, color: '#fff', marginBottom: 12 }}>
+            TOP 10 - LIFETIME TICKETS CLOSED
+          </div>
+          {leaderboard.length === 0 && (
+            <div style={{ fontSize: 10, color: '#888' }}>(no entries yet)</div>
+          )}
+          {leaderboard.map((entry, i) => {
+            const isMe = entry.displayName?.toLowerCase() === playerName?.toLowerCase();
+            return (
+              <div key={entry.nameLower || i} style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                padding: '6px 4px',
+                fontSize: 10,
+                background: isMe ? 'rgba(51, 255, 102, 0.18)' : 'transparent',
+                color: isMe ? '#33ff66' : '#ddd',
+                borderLeft: isMe ? '3px solid #33ff66' : '3px solid transparent',
+                paddingLeft: 8
+              }}>
+                <span>{(i + 1).toString().padStart(2, '0')}. {entry.displayName}</span>
+                <span>{entry.ticketsKilled.toLocaleString()} tickets</span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Back to menu */}
+        <div style={{ textAlign: 'center' }}>
+          <button
+            onClick={onBackToMenu}
+            style={{
+              padding: '18px 40px',
+              fontSize: 14,
+              fontFamily: '"Press Start 2P", monospace',
+              background: '#33ff66',
+              color: '#0a0010',
+              border: '3px solid #fff',
+              cursor: 'pointer',
+              boxShadow: '0 0 20px rgba(51, 255, 102, 0.6), 0 4px 0 #117733'
+            }}
+            onMouseEnter={(e) => { e.target.style.transform = 'scale(1.05)'; }}
+            onMouseLeave={(e) => { e.target.style.transform = 'scale(1)'; }}
+          >
+            ▶ BACK TO MENU
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Small row helper for the LeaderboardScreen stat blocks
+const Row = ({ label, value }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, padding: '5px 0' }}>
+    <span style={{ color: '#bbb' }}>{label}</span>
+    <span style={{ color: '#fff', fontWeight: 'bold' }}>{value}</span>
+  </div>
+);
+
 const BeatEmUpGame = () => {
   const [screen, setScreen] = useState('menu'); // menu, lobby, game
   const [socket, setSocket] = useState(null);
@@ -874,9 +1050,25 @@ const BeatEmUpGame = () => {
   const [stageTransition, setStageTransition] = useState(null);
   // Attribute picker state: { choices: [{key,tier,tierLabel,tierColor,name,effect}],
   //                           reason: 'game-start' | 'stage-start',
+  //                           luck: number,
   //                           stageName: string }
   // Cleared once the player picks one (or 'sentinel' for none-pending).
   const [attributeChoices, setAttributeChoices] = useState(null);
+  // Persistent-leaderboard payload pushed by the server when the player's
+  // session is submitted at boss death (or on disconnect, though we don't
+  // see that one). Drives the post-retirement leaderboard screen.
+  //   { name, previousTickets, newTickets, newBosses, newCrawls,
+  //     sessionStats: { ticketsKilled, bossesDefeated, crawlsCompleted },
+  //     leaderboard: [...top10], globalStats: { totalTickets, ... } }
+  const [statsPayload, setStatsPayload] = useState(null);
+  // After the VictoryScreen splash, the player clicks through to the
+  // leaderboard. This bool gates between the two victory sub-screens.
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+  // Lifetime tickets pulled at room join. Stored mainly so the React-DevTools
+  // tab and any future stats UI can see the player's persistent total; the
+  // in-game picker uses `luck` from the per-modal payload, not this.
+  // eslint-disable-next-line no-unused-vars
+  const [lifetimeTickets, setLifetimeTickets] = useState(0);
 
   const canvasRef = useRef(null);
   const keysPressed = useRef({});
@@ -986,20 +1178,33 @@ const BeatEmUpGame = () => {
       }
     });
 
-    newSocket.on('roomCreated', ({ roomId: id, playerId: pid, gameState: gs }) => {
+    newSocket.on('roomCreated', ({ roomId: id, playerId: pid, gameState: gs, lifetimeTickets: lt }) => {
       setRoomId(id);
       setPlayerId(pid);
       setGameState(gs);
       setLevelWon(false);
+      setShowLeaderboard(false);
+      setStatsPayload(null);
+      if (typeof lt === 'number') setLifetimeTickets(lt);
       setScreen('game');
     });
 
-    newSocket.on('roomJoined', ({ roomId: id, playerId: pid, gameState: gs }) => {
+    newSocket.on('roomJoined', ({ roomId: id, playerId: pid, gameState: gs, lifetimeTickets: lt }) => {
       setRoomId(id);
       setPlayerId(pid);
       setGameState(gs);
       setLevelWon(false);
+      setShowLeaderboard(false);
+      setStatsPayload(null);
+      if (typeof lt === 'number') setLifetimeTickets(lt);
       setScreen('game');
+    });
+
+    // Persistent-leaderboard Query #2 just ran on the server - it returned
+    // our updated lifetime totals + the top-10 leaderboard. Store so the
+    // post-retirement screen can render them.
+    newSocket.on('statsSubmitted', (payload) => {
+      setStatsPayload(payload);
     });
 
     newSocket.on('playerJoined', ({ player }) => {
@@ -1141,8 +1346,8 @@ const BeatEmUpGame = () => {
 
     // Server rolled 3 attribute choices for us (on game start or stage start).
     // Show the picker modal until the player clicks one.
-    newSocket.on('attributeChoicesOffered', ({ choices, reason, stageName }) => {
-      setAttributeChoices({ choices, reason, stageName });
+    newSocket.on('attributeChoicesOffered', ({ choices, reason, stageName, luck }) => {
+      setAttributeChoices({ choices, reason, stageName, luck });
     });
 
     setSocket(newSocket);
@@ -1728,8 +1933,18 @@ const BeatEmUpGame = () => {
         </div>
       )}
 
-      {screen === 'victory' && (
-        <VictoryScreen onBackToMenu={resetToMenu} />
+      {screen === 'victory' && !showLeaderboard && (
+        <VictoryScreen
+          onBackToMenu={resetToMenu}
+          onAdvance={() => setShowLeaderboard(true)}
+          advanceLabel="▶ VIEW LEADERBOARD"
+        />
+      )}
+      {screen === 'victory' && showLeaderboard && (
+        <LeaderboardScreen
+          payload={statsPayload}
+          onBackToMenu={resetToMenu}
+        />
       )}
 
       {screen === 'game' && gameState && (
@@ -1919,6 +2134,7 @@ const BeatEmUpGame = () => {
               choices={attributeChoices.choices}
               reason={attributeChoices.reason}
               stageName={attributeChoices.stageName}
+              luck={attributeChoices.luck}
               onPick={(choice) => {
                 if (socket && roomId) {
                   socket.emit('selectAttribute', { roomId, key: choice.key, tier: choice.tier });
