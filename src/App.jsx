@@ -16,13 +16,18 @@ const COOLDOWN_MS = { punch: 300, kick: 600, special: 5000 };
  * Action button with cooldown sweep overlay.
  * The overlay is a conic-gradient that goes from full coverage (just-pressed)
  * to no coverage (cooldown finished), creating a clockwise "fill" indicator.
+ *
+ * Position is supplied by the parent via `style` (mobile passes
+ * position:absolute, desktop ability row uses flex layout). If `keyHint` is
+ * passed (desktop only) a small chip in the top-right shows the key binding.
  */
 const ActionButton = ({
   cooldownKey, // 'punch' | 'kick' | 'special' | null (no cooldown)
   cooldownsRef,
   pressHandlers,
   style,
-  label
+  label,
+  keyHint // optional - e.g. "J", "K", "L", "SPACE"
 }) => {
   // Read cooldown from ref. We rely on parent's rAF loop to re-render.
   const cd = cooldownKey ? cooldownsRef?.current?.[cooldownKey] : null;
@@ -40,10 +45,9 @@ const ActionButton = ({
     <div
       {...pressHandlers}
       style={{
-        ...style,
-        position: 'absolute',
         overflow: 'hidden',
-        opacity: onCooldown ? 0.6 : 1
+        opacity: onCooldown ? 0.6 : 1,
+        ...style // caller controls position (absolute / relative / flex item)
       }}
     >
       {/* Cooldown sweep overlay (conic gradient) */}
@@ -55,6 +59,28 @@ const ActionButton = ({
           background: `conic-gradient(rgba(0,0,0,0.65) ${progress * 360}deg, transparent ${progress * 360}deg)`,
           pointerEvents: 'none'
         }} />
+      )}
+      {/* Keybinding chip (desktop only) */}
+      {keyHint && (
+        <div style={{
+          position: 'absolute',
+          top: 2,
+          right: 2,
+          minWidth: 14,
+          height: 14,
+          padding: '0 3px',
+          background: 'rgba(0,0,0,0.85)',
+          border: '1px solid currentColor',
+          borderRadius: 3,
+          fontSize: 8,
+          lineHeight: '12px',
+          textAlign: 'center',
+          color: 'currentColor',
+          textShadow: 'none',
+          boxShadow: 'none',
+          pointerEvents: 'none',
+          zIndex: 2
+        }}>{keyHint}</div>
       )}
       {/* Button label (and remaining time for long cooldowns) */}
       <div style={{
@@ -69,6 +95,145 @@ const ActionButton = ({
           <span style={{ fontSize: '11px', marginTop: '2px' }}>{remainingSec}s</span>
         )}
       </div>
+    </div>
+  );
+};
+
+/**
+ * DesktopAbilityIcons - Compact horizontal row of the 4 action buttons,
+ * shown only on non-touch desktops. Each button has the keybinding chip,
+ * the same cooldown sweep as mobile, and is clickable with the mouse so
+ * desktop users can also see at a glance what J/K/L/SPACE do.
+ *
+ * Positioned at the bottom-right of the viewport so it doesn't obstruct
+ * the gameplay action in the center of the canvas.
+ */
+const DesktopAbilityIcons = ({ keysPressed, cooldownsRef }) => {
+  // Force re-render at ~60fps to update cooldown sweep visuals (same pattern
+  // as MobileControls). Only re-renders while a cooldown is active.
+  const [, forceUpdate] = React.useReducer(x => x + 1, 0);
+  React.useEffect(() => {
+    let raf;
+    const loop = () => {
+      const now = Date.now();
+      const cds = cooldownsRef.current;
+      const anyActive = cds.punch.end > now || cds.kick.end > now || cds.special.end > now;
+      if (anyActive) forceUpdate();
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [cooldownsRef]);
+
+  const setKey = (key, down) => { keysPressed.current[key] = down; };
+
+  const isOnCooldown = (cdKey) => {
+    if (!cdKey) return false;
+    const cd = cooldownsRef.current[cdKey];
+    return cd && cd.end > Date.now();
+  };
+
+  const pressHandlers = (key, cdKey) => ({
+    onMouseDown: (e) => {
+      e.preventDefault();
+      if (isOnCooldown(cdKey)) return;
+      setKey(key, true);
+    },
+    onMouseUp: (e) => { e.preventDefault(); setKey(key, false); },
+    onMouseLeave: () => { setKey(key, false); }
+  });
+
+  const size = 56;
+  const baseStyle = {
+    position: 'relative',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    fontFamily: '"Press Start 2P", monospace',
+    width: size,
+    height: size,
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+    flexShrink: 0
+  };
+
+  return (
+    <div style={{
+      position: 'fixed',
+      right: 20,
+      bottom: 80, // sits above the bottom HUD bar
+      display: 'flex',
+      gap: 10,
+      pointerEvents: 'auto',
+      zIndex: 200
+    }}>
+      <ActionButton
+        cooldownKey={null}
+        cooldownsRef={cooldownsRef}
+        pressHandlers={pressHandlers(' ', null)}
+        label="JUMP"
+        keyHint="SPACE"
+        style={{
+          ...baseStyle,
+          background: 'rgba(60, 60, 0, 0.75)',
+          border: '2px solid #ffff00',
+          color: '#ffff00',
+          textShadow: '0 0 5px #ffff00',
+          boxShadow: '0 0 10px rgba(255, 255, 0, 0.4)',
+          fontSize: 8
+        }}
+      />
+      <ActionButton
+        cooldownKey="punch"
+        cooldownsRef={cooldownsRef}
+        pressHandlers={pressHandlers('j', 'punch')}
+        label="PUNCH"
+        keyHint="J"
+        style={{
+          ...baseStyle,
+          background: 'rgba(60, 0, 30, 0.75)',
+          border: '2px solid #ff3366',
+          color: '#ff3366',
+          textShadow: '0 0 5px #ff3366',
+          boxShadow: '0 0 10px rgba(255, 51, 102, 0.4)',
+          fontSize: 8
+        }}
+      />
+      <ActionButton
+        cooldownKey="kick"
+        cooldownsRef={cooldownsRef}
+        pressHandlers={pressHandlers('k', 'kick')}
+        label="KICK"
+        keyHint="K"
+        style={{
+          ...baseStyle,
+          background: 'rgba(60, 30, 0, 0.75)',
+          border: '2px solid #ff9900',
+          color: '#ff9900',
+          textShadow: '0 0 5px #ff9900',
+          boxShadow: '0 0 10px rgba(255, 153, 0, 0.4)',
+          fontSize: 9
+        }}
+      />
+      <ActionButton
+        cooldownKey="special"
+        cooldownsRef={cooldownsRef}
+        pressHandlers={pressHandlers('l', 'special')}
+        label="SPECIAL"
+        keyHint="L"
+        style={{
+          ...baseStyle,
+          background: 'rgba(40, 0, 60, 0.75)',
+          border: '2px solid #ff00ff',
+          color: '#ff00ff',
+          textShadow: '0 0 5px #ff00ff',
+          boxShadow: '0 0 10px rgba(255, 0, 255, 0.4)',
+          fontSize: 7
+        }}
+      />
     </div>
   );
 };
@@ -128,6 +293,11 @@ const MobileControls = ({ keysPressed, cooldownsRef }) => {
   });
 
   const buttonBaseStyle = {
+    // MobileControls positions its buttons via left/top within fixed-size
+    // parent containers, so each button needs to be absolutely positioned.
+    // (ActionButton itself no longer hardcodes position so DesktopAbilityIcons
+    // can use a flex row layout instead.)
+    position: 'absolute',
     userSelect: 'none',
     WebkitUserSelect: 'none',
     touchAction: 'none',
@@ -1501,7 +1671,17 @@ const BeatEmUpGame = () => {
             <MobileControls keysPressed={keysPressed} cooldownsRef={cooldownsRef} />
           )}
 
-          {/* Bottom HUD */}
+          {/* Desktop Ability Icons - compact PUNCH/KICK/SPECIAL/JUMP row
+              with keybinding chips and cooldown sweeps, shown on non-touch
+              devices so new players can see at a glance what each key does
+              and how long until an ability is ready again. */}
+          {!isMobile && (
+            <DesktopAbilityIcons keysPressed={keysPressed} cooldownsRef={cooldownsRef} />
+          )}
+
+          {/* Bottom HUD - movement hints. Attack hints are now shown
+              visually on the ability buttons themselves, so we don't
+              duplicate them here. */}
           <div style={{
             padding: '15px',
             background: 'rgba(10, 10, 10, 0.95)',
@@ -1516,10 +1696,6 @@ const BeatEmUpGame = () => {
               <>
                 <span>A/D: MOVE</span>
                 <span>W/S: DEPTH</span>
-                <span>SPACE: JUMP</span>
-                <span>J: PUNCH</span>
-                <span>K: KICK</span>
-                <span>L: SPECIAL</span>
               </>
             )}
             {isMobile && (
