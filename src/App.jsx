@@ -12,6 +12,45 @@ const SERVER_URL = window.location.origin;
 // Must roughly match server-side Unit.attackCooldown for each attackType.
 const COOLDOWN_MS = { punch: 300, kick: 600, special: 5000 };
 
+// Hit-feedback durations (ms).
+// HIT_FLASH_DURATION_MS - total stun-visual window. Roughly matches the
+//   knockback decay (~300 ms) on the server so the "stunned" overlay clears
+//   right as the player regains full control.
+// HIT_FLASH_IMPACT_MS   - first slice of the window where we draw a bright
+//   white overlay (the "POP" of impact). After this it shifts to a red
+//   pain tint that fades out over the remainder.
+const HIT_FLASH_DURATION_MS = 350;
+const HIT_FLASH_IMPACT_MS = 80;
+
+/**
+ * Draw three small yellow "+" stars orbiting above the head as a classic
+ * 16-bit stun indicator. `t` is the time since the hit in seconds (used to
+ * spin the orbit so it reads as motion, not a static decoration).
+ */
+function drawStunStars(ctx, cx, headY, sinceHitMs) {
+  const NUM_STARS = 3;
+  const RX = 18;          // horizontal orbit radius (wide ellipse over head)
+  const RY = 6;           // vertical orbit radius (flatter)
+  const STAR = 5;         // size of the "+" arms in pixels
+  const rotPerSec = 2.5;  // orbit rotations per second
+  const t = sinceHitMs / 1000;
+  const baseAngle = t * Math.PI * 2 * rotPerSec;
+
+  ctx.save();
+  ctx.fillStyle = '#ffee00';
+  ctx.shadowColor = '#000';
+  ctx.shadowBlur = 2;
+  for (let i = 0; i < NUM_STARS; i++) {
+    const a = baseAngle + (i * Math.PI * 2 / NUM_STARS);
+    const sx = Math.round(cx + Math.cos(a) * RX);
+    const sy = Math.round(headY + Math.sin(a) * RY);
+    // Simple "+" star
+    ctx.fillRect(sx - STAR / 2, sy - 1, STAR, 2);
+    ctx.fillRect(sx - 1, sy - STAR / 2, 2, STAR);
+  }
+  ctx.restore();
+}
+
 /**
  * Action button with cooldown sweep overlay.
  * The overlay is a conic-gradient that goes from full coverage (just-pressed)
@@ -1100,6 +1139,31 @@ const BeatEmUpGame = () => {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
+      // Stun vignette - red gradient at the screen edges fades over the stun
+      // window when the LOCAL player gets hit. Catches peripheral attention
+      // so you can't miss "I just took damage" even if your eyes were on a
+      // different enemy. Local-only so other players' hits don't spam the FX.
+      if (gameState.players) {
+        const me = gameState.players.find(p => p.id === playerId);
+        if (me && me.lastHitTime) {
+          const sinceHitMe = now - me.lastHitTime;
+          if (sinceHitMe < HIT_FLASH_DURATION_MS) {
+            const t = sinceHitMe / HIT_FLASH_DURATION_MS;        // 0 -> 1
+            const intensity = (1 - t) * 0.55;                    // peak 55%
+            const vignette = ctx.createRadialGradient(
+              canvas.width / 2, canvas.height / 2,
+              Math.min(canvas.width, canvas.height) * 0.30,
+              canvas.width / 2, canvas.height / 2,
+              Math.max(canvas.width, canvas.height) * 0.65
+            );
+            vignette.addColorStop(0, 'rgba(255,0,0,0)');
+            vignette.addColorStop(1, `rgba(255,0,0,${intensity})`);
+            ctx.fillStyle = vignette;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+          }
+        }
+      }
+
       // Boss death cinematic - dims everything, zooms in, plays 64-frame anim
       if (gameState.bossDying) {
         drawBossDeathCinematic(ctx, gameState, now, canvas.width, canvas.height);
@@ -1730,9 +1794,12 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   const isMoving = Math.abs(unit.velocityX || 0) > 0.3;
   const bobAmount = isMoving ? Math.sin(now / 80) * 2 : 0;
 
-  // Hit flash effect (within 150ms of being hit)
-  const hitFlash = unit.lastHitTime && (now - unit.lastHitTime) < 150;
-  const flashAlpha = hitFlash ? 1 - ((now - unit.lastHitTime) / 150) : 0;
+  // Hit / stun feedback. Extended from 150ms -> 350ms so the player can
+  // actually see the brief stun window (knockback decay) - previously only
+  // the impact frame flashed and the stun was visually invisible.
+  const sinceHit = unit.lastHitTime ? now - unit.lastHitTime : Infinity;
+  const hitFlash = sinceHit < HIT_FLASH_DURATION_MS;
+  const flashAlpha = hitFlash ? Math.max(0, 1 - sinceHit / HIT_FLASH_DURATION_MS) : 0;
 
   // Shadow follows unit's ground (depth) position, scales smaller when in air
   const unitGroundY = unit.groundY !== undefined ? unit.groundY : groundLevel;
@@ -1749,7 +1816,7 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   if (unit.team === 'players' && getBillSprites()) {
     const billFrame = pickBillFrame(unit, now);
     if (billFrame && billFrame.sprite && billFrame.sprite.canvas) {
-      drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, billFrame);
+      drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, billFrame, sinceHit);
       return;
     }
     // If frame invalid, fall through to procedural rendering below
@@ -1854,13 +1921,22 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 
   ctx.shadowBlur = 0;
 
-  // === HIT FLASH (white overlay) ===
+  // === HIT FLASH (two-phase: white impact pop -> red pain tint) ===
   if (hitFlash) {
-    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    if (sinceHit < HIT_FLASH_IMPACT_MS) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    } else {
+      ctx.fillStyle = `rgba(255, 60, 60, ${flashAlpha * 0.65})`;
+    }
     ctx.fillRect(-w / 2 - 5, -h / 2 - 2, w + 10, h + 5);
   }
 
   ctx.restore();
+
+  // Stun stars above head (players only - matches Bill sprite path)
+  if (hitFlash && unit.team === 'players') {
+    drawStunStars(ctx, cx, screenY + 4, sinceHit);
+  }
 
   // === ATTACK EFFECTS (in world space, not rotated) ===
   if (unit.isAttacking) {
@@ -1995,7 +2071,7 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
  * Handles idle, walking, punching, kicking animations + flipping
  * Frame is pre-validated by caller in drawUnit
  */
-function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame) {
+function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame, sinceHit) {
   const sprite = frame.sprite;
   // Render each frame at its native source pixel dimensions. The SpriteLoader
   // returns full cells (variable width per row in the new sheet, e.g. 154 px
@@ -2036,10 +2112,19 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
 
   ctx.shadowBlur = 0;
 
-  // Hit flash overlay
+  // Hit flash overlay - two-phase: bright white "POP" for the first 80ms,
+  // then a red "pain" tint that fades over the rest of the stun window.
+  // The red tint makes the stun period readable - white-on-skin alone was
+  // too subtle to register that Bill is briefly stunned/recoiling.
   if (hitFlash) {
     ctx.globalCompositeOperation = 'source-atop';
-    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    if (sinceHit < HIT_FLASH_IMPACT_MS) {
+      // Impact: bright white pop, full alpha
+      ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+    } else {
+      // Pain tint: warm red, ~60% strength so character still reads
+      ctx.fillStyle = `rgba(255, 60, 60, ${flashAlpha * 0.65})`;
+    }
     if (shouldMirror) {
       ctx.fillRect(0, drawY, drawW, drawH);
     } else {
@@ -2049,6 +2134,15 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   }
 
   ctx.restore();
+
+  // Stun stars orbiting above head (classic 16-bit "you got hit" indicator).
+  // Only for players - mooks getting punched don't need stars, their white
+  // flash already sells the impact (and the attackCooldown reset stuns them
+  // mechanically on the server side, which reads visually as a stagger).
+  if (hitFlash && unit.team === 'players') {
+    const headY = drawY + 10; // top of sprite cell ~ above the head
+    drawStunStars(ctx, cx, headY, sinceHit);
+  }
 
   // Health bar (above sprite)
   if (!unit.isKnockedOut) {
