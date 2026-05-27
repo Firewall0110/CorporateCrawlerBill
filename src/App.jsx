@@ -2218,6 +2218,15 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
     drawStunStars(ctx, cx, headY, sinceHit);
   }
 
+  // Attack FX overlay - the sprite path previously skipped this, so
+  // special / kick / punch had no on-screen effect when sprites loaded.
+  // Now the magenta detonation rings for special (and the swoosh for
+  // kick, star for punch) render on top of the sprite so the move
+  // always reads as impactful regardless of which frame is showing.
+  if (unit.isAttacking) {
+    drawAttackEffect(ctx, unit, screenX, screenY, facing, now);
+  }
+
   // Health bar (above sprite)
   if (!unit.isKnockedOut) {
     const barWidth = w;
@@ -2257,32 +2266,137 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
 }
 
 /**
+ * Special-ability detonation FX. Renders on top of the sprite art so the
+ * special move reads as a big "BOOM" regardless of what the sprite frame
+ * happens to be showing. Five overlapping layers:
+ *   1. White-hot radial core that flashes then fades
+ *   2. Three concentric magenta shockwave rings expanding outward at
+ *      staggered phases so there's always one ring in motion
+ *   3. Eight jagged lightning bolts radiating from the center, with
+ *      time-jittered segments so they look alive
+ *   4. Twelve yellow sparkles flying outward on the leading edge
+ *   5. A semi-transparent magenta "damage bubble" that grows and pops
+ */
+function drawSpecialExplosion(ctx, cx, cy, progress, opacity, now) {
+  ctx.save();
+  const MAX_R = 150;
+  // ease-out cubic so the explosion bursts fast then settles
+  const easeOut = 1 - Math.pow(1 - progress, 3);
+
+  // ---- 1. White-hot core flash (largest at start, shrinks as it fades) ----
+  const coreR = 36 * (1 - progress * 0.4);
+  const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.2);
+  coreGrad.addColorStop(0,    `rgba(255, 255, 255, ${opacity})`);
+  coreGrad.addColorStop(0.25, `rgba(255, 220, 255, ${opacity * 0.85})`);
+  coreGrad.addColorStop(0.6,  `rgba(255, 80,  255, ${opacity * 0.45})`);
+  coreGrad.addColorStop(1,    'rgba(255, 0, 255, 0)');
+  ctx.fillStyle = coreGrad;
+  ctx.beginPath();
+  ctx.arc(cx, cy, coreR * 2.2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // ---- 2. Three expanding shockwave rings ----
+  for (let i = 0; i < 3; i++) {
+    const ringPhase = (progress + i * 0.33) % 1;
+    const ringR = MAX_R * ringPhase;
+    const ringAlpha = (1 - ringPhase) * opacity * 0.85;
+    if (ringAlpha <= 0.01) continue;
+    ctx.strokeStyle = `rgba(255, 0, 255, ${ringAlpha})`;
+    ctx.lineWidth = 3 + (1 - ringPhase) * 4;
+    ctx.shadowColor = '#ff00ff';
+    ctx.shadowBlur = 16;
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // ---- 3. Eight jagged lightning bolts radiating outward ----
+  const NUM_BOLTS = 8;
+  const boltLen = 70 + easeOut * 50;
+  const baseSpin = progress * Math.PI * 0.5; // slow rotation while firing
+  for (let i = 0; i < NUM_BOLTS; i++) {
+    const angle = (i / NUM_BOLTS) * Math.PI * 2 + baseSpin;
+    const startR = 22;
+    const sx = cx + Math.cos(angle) * startR;
+    const sy = cy + Math.sin(angle) * startR;
+
+    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.95})`;
+    ctx.lineWidth = 2;
+    ctx.shadowColor = '#ff00ff';
+    ctx.shadowBlur = 10;
+    ctx.beginPath();
+    ctx.moveTo(sx, sy);
+
+    // Build jagged path with perpendicular jitter that animates
+    const segs = 5;
+    const perpX = -Math.sin(angle);
+    const perpY = Math.cos(angle);
+    for (let s = 1; s <= segs; s++) {
+      const t = s / segs;
+      const baseX = sx + Math.cos(angle) * boltLen * t;
+      const baseY = sy + Math.sin(angle) * boltLen * t;
+      // jitter shrinks as we approach the tip, and animates over time
+      const jitterAmt = 9 * (1 - t * 0.7) * Math.sin(now / 25 + i * 1.7 + s * 2.3);
+      ctx.lineTo(baseX + perpX * jitterAmt, baseY + perpY * jitterAmt);
+    }
+    ctx.stroke();
+  }
+
+  // ---- 4. Twelve yellow sparkles on the leading edge of the blast ----
+  const NUM_SPARKS = 12;
+  for (let i = 0; i < NUM_SPARKS; i++) {
+    const angle = (i / NUM_SPARKS) * Math.PI * 2 + progress * 0.8;
+    // sparks drift outward over the duration, with a per-spark wobble
+    const r = MAX_R * easeOut * (0.65 + Math.sin(i * 4.1) * 0.3);
+    const sx = cx + Math.cos(angle) * r;
+    const sy = cy + Math.sin(angle) * r;
+    const size = 2.5 + (1 - progress) * 2.5;
+    ctx.fillStyle = `rgba(255, 240, 100, ${opacity})`;
+    ctx.shadowColor = '#ffff00';
+    ctx.shadowBlur = 7;
+    ctx.fillRect(sx - size / 2, sy - size / 2, size, size);
+  }
+
+  // ---- 5. "Damage bubble" - the user explicitly asked for one. A growing
+  // semi-transparent magenta sphere that wraps the character mid-blast then
+  // pops on the way out. Sits BELOW the rings/bolts visually because we
+  // draw it last with a lower z-conceptually (just composite-wise it's
+  // on top, but at low alpha it reads as a bubble enclosure). ----
+  const bubbleR = 30 + easeOut * 70;
+  const bubbleAlpha = opacity * (1 - progress * 0.6) * 0.35;
+  if (bubbleAlpha > 0.01) {
+    const bubGrad = ctx.createRadialGradient(cx, cy, bubbleR * 0.5, cx, cy, bubbleR);
+    bubGrad.addColorStop(0, 'rgba(255, 100, 255, 0)');
+    bubGrad.addColorStop(0.7, `rgba(255, 0, 255, ${bubbleAlpha * 0.4})`);
+    bubGrad.addColorStop(1, `rgba(255, 200, 255, ${bubbleAlpha})`);
+    ctx.fillStyle = bubGrad;
+    ctx.shadowBlur = 0;
+    ctx.beginPath();
+    ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bubble rim highlight
+    ctx.strokeStyle = `rgba(255, 220, 255, ${bubbleAlpha * 1.8})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+/**
  * Draw attack effect (different per attack type)
  */
 function drawAttackEffect(ctx, unit, screenX, screenY, facing, now) {
   const cx = screenX + unit.width / 2;
+  const cy = screenY + unit.height / 2;
   const attackProgress = Math.min(1, ((now - unit.attackStartTime) || 0) / (unit.attackDuration || 300));
   const attackOpacity = Math.sin(attackProgress * Math.PI); // Fade in/out
 
   if (unit.attackType === 'special') {
-    // Large ring expanding outward
-    const radius = 30 + attackProgress * 90;
-    ctx.strokeStyle = `rgba(255, 0, 255, ${attackOpacity * 0.8})`;
-    ctx.lineWidth = 4;
-    ctx.shadowColor = '#ff00ff';
-    ctx.shadowBlur = 20;
-    ctx.beginPath();
-    ctx.arc(cx, screenY + unit.height / 2, radius, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Inner ring
-    ctx.strokeStyle = `rgba(255, 255, 255, ${attackOpacity})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, screenY + unit.height / 2, radius * 0.6, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.shadowBlur = 0;
+    drawSpecialExplosion(ctx, cx, cy, attackProgress, attackOpacity, now);
   } else if (unit.attackType === 'kick') {
     // Arc swoosh
     const swooshX = cx + facing * 40;
