@@ -224,8 +224,8 @@ const ATTRIBUTES = {
     target: 'maxHealth', appliesToTeam: 'players',
     scale: TIER_BUFF_MULT, format: fmtBuff('max health')
   },
-  OPEN_THE_KIMONO: {
-    name: 'Open the Kimono',
+  DRILL_DOWN: {
+    name: 'Drill Down',
     target: 'armor', appliesToTeam: 'enemies',
     scale: TIER_ARMOR_REDUCTION, format: fmtFlatMinus('enemy armor')
   },
