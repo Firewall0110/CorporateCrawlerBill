@@ -362,7 +362,13 @@ class GameRoom {
     // Update boss if exists
     if (this.boss) {
       this.boss.updateAI(Array.from(this.players.values()), deltaTime);
-      this.boss.update(deltaTime, this.gravity, this.groundLevel, this.worldWidth, this.playAreaTop);
+      // Boss is taller than players (height 110 vs 60). If we clamp its
+      // groundY to the same value as players, the boss's feet (y + height)
+      // sit 50 px BELOW the canvas bottom and its lower body is clipped.
+      // Cap the boss's groundY 50 px higher so its feet land on the same
+      // canvas-bottom line as Bill's at the south boundary.
+      const bossGroundLevel = this.groundLevel - (this.boss.height - 60);
+      this.boss.update(deltaTime, this.gravity, bossGroundLevel, this.worldWidth, this.playAreaTop);
     }
 
     // Spawn waves
@@ -673,11 +679,18 @@ class GameRoom {
       movementSpeed: 0.85    // bumped: 0.4 -> 0.85 (over 2x)
     };
 
+    // Spawn the boss at the height-adjusted groundLevel (see Update notes:
+    // boss is 110 tall, so its feet land 50 px lower than a player's if it
+    // sits at groundLevel directly - which would clip off the canvas).
+    // Boss height is set in the Boss constructor (110); we mirror the
+    // offset (boss-height - 60) here so spawn frame 1 already lines up.
+    const BOSS_HEIGHT = 110;
+    const bossSpawnGroundLevel = this.groundLevel - (BOSS_HEIGHT - 60);
     this.boss = new Boss(
       `${this.id}-boss`,
       'Critical Priority 1 Outage',
       bossStats,
-      { x: centerX, y: this.groundLevel }
+      { x: centerX, y: bossSpawnGroundLevel }
     );
 
     // Apply modifiers to boss
