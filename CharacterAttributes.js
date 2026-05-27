@@ -1,125 +1,389 @@
 /**
- * Character Attributes - Permanent modifiers that players bring to the game
- * Each attribute affects game state while the player is active
+ * Character Attributes - Permanent modifiers players accumulate during a run.
+ *
+ * Each attribute has 7 rarity tiers (common -> celestial). When offered to a
+ * player, an attribute is rolled with a tier weighted by RARITY_WEIGHTS.
+ * The picker UI shows three rolled choices and the player selects one.
+ * Selected attributes stack: pick Synergize twice, both modifiers apply
+ * (e.g. attack x1.10 x2.20 = x2.42 if you got a common then a mythic).
+ *
+ * Player gets a choice on game start AND at the start of every stage.
  */
 
+// =====  Rarity tiers, weights, and colors =====
+
+const RARITIES = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'celestial'];
+
+// Roll weights (sum to 100). Common is most likely, celestial barely ever.
+const RARITY_WEIGHTS = {
+  common:    40,
+  uncommon:  25,
+  rare:      15,
+  epic:      10,
+  legendary:  6,
+  mythic:     3,
+  celestial:  1
+};
+
+// Visible color codes for the picker cards. White / green / blue / purple /
+// orange / red / light-blue is a common WoW-style rarity gradient with
+// celestial as light-cyan to feel "godly".
+const TIER_COLORS = {
+  common:    '#ffffff',
+  uncommon:  '#22dd55',
+  rare:      '#3399ff',
+  epic:      '#bb55ff',
+  legendary: '#ff9933',
+  mythic:    '#ff3333',
+  celestial: '#88ddff'
+};
+
+// Pretty labels for the UI
+const TIER_LABELS = {
+  common:    'COMMON',
+  uncommon:  'UNCOMMON',
+  rare:      'RARE',
+  epic:      'EPIC',
+  legendary: 'LEGENDARY',
+  mythic:    'MYTHIC',
+  celestial: 'CELESTIAL'
+};
+
+// ===== Tier-value tables for each stat-kind =====
+//
+// Most attributes fall into one of a few common scaling shapes; rather than
+// hand-write 7 numbers per attribute, attributes reference a shape and we
+// look up the value. This keeps the 28 attribute definitions short and
+// guarantees consistent power-curves across attributes of the same kind.
+
+// Player buff (multiplicative >1). Celestial is comically broken (4x = +300%).
+const TIER_BUFF_MULT = {
+  common:    1.10,  // +10%
+  uncommon:  1.20,  // +20%
+  rare:      1.35,  // +35%
+  epic:      1.55,  // +55%
+  legendary: 1.80,  // +80%
+  mythic:    2.20,  // +120%
+  celestial: 4.00   // +300% (hilariously broken)
+};
+
+// Enemy debuff (multiplicative <1). Celestial reduces to 2% of original.
+const TIER_DEBUFF_MULT = {
+  common:    0.90,  // -10%
+  uncommon:  0.80,  // -20%
+  rare:      0.65,  // -35%
+  epic:      0.45,  // -55%
+  legendary: 0.20,  // -80%
+  mythic:    0.10,  // -90%
+  celestial: 0.02   // -98% (hilariously broken)
+};
+
+// Armor (additive flat). Celestial >100 means ~1 dmg per hit (Math.max(1,...))
+const TIER_ARMOR_FLAT = {
+  common:     5,
+  uncommon:  10,
+  rare:      20,
+  epic:      35,
+  legendary: 50,
+  mythic:    75,
+  celestial: 110
+};
+
+// Enemy armor reduction (additive negative). Goes <-100 to multiply dmg taken.
+const TIER_ARMOR_REDUCTION = {
+  common:    -5,
+  uncommon:  -10,
+  rare:      -20,
+  epic:      -35,
+  legendary: -50,
+  mythic:    -75,
+  celestial: -110   // enemies take ~2.1x damage
+};
+
+// Helper: format a multiplicative buff as "+NN% description"
+const fmtBuff = (label) => (tier, v) => `+${Math.round((v - 1) * 100)}% ${label}`;
+// Helper: format a multiplicative debuff as "-NN% description"
+const fmtDebuff = (label) => (tier, v) => `-${Math.round((1 - v) * 100)}% ${label}`;
+// Helper: format additive armor as "+NN description"
+const fmtFlatPlus = (label) => (tier, v) => `+${v} ${label}`;
+const fmtFlatMinus = (label) => (tier, v) => `${v} ${label}`; // negative-signed already
+
+// ===== Attribute definitions =====
+//
+// shape:
+//   { name, theme, target, appliesToTeam, scale, format }
+// scale references a TIER_* table; format() returns the description string
+// for a given (tier, value) pair, used by the picker UI.
+
 const ATTRIBUTES = {
-  // Damage boost
+  // --- Original 8 (re-expressed in new tier system) ---
   EFFECTIVE_COMMUNICATOR: {
     name: 'Effective Communicator',
-    description: 'Boosts team attack by +20%',
-    modifier: {
-      target: 'attack',
-      value: 1.2,
-      appliesToTeam: 'all' // Applies to all units
-    }
+    target: 'attack', appliesToTeam: 'all',
+    scale: TIER_BUFF_MULT, format: fmtBuff('team attack')
   },
-
-  // Enemy debuff
   CRYSTAL_CLARITY_IV: {
     name: 'Crystal Clarity IV',
-    description: 'Reduces enemy effective health by -40%',
-    modifier: {
-      target: 'maxHealth',
-      value: 0.6,
-      appliesToTeam: 'enemies'
-    }
+    target: 'maxHealth', appliesToTeam: 'enemies',
+    scale: TIER_DEBUFF_MULT, format: fmtDebuff('enemy max health')
   },
-
-  // Attack speed buff
   HARD_DRIVE: {
     name: 'Hard Drive',
-    description: 'Increases team attack speed by +10%',
-    modifier: {
-      target: 'attackSpeed',
-      value: 1.1,
-      appliesToTeam: 'all'
-    }
+    target: 'attackSpeed', appliesToTeam: 'all',
+    scale: TIER_BUFF_MULT, format: fmtBuff('team attack speed')
   },
-
-  // Defense buff
   SYSTEMATIC_THINKER: {
     name: 'Systematic Thinker',
-    description: 'Reduces party incoming damage by -25% armor',
-    modifier: {
-      target: 'armor',
-      value: 25,
-      appliesToTeam: 'players'
-    }
+    target: 'armor', appliesToTeam: 'players',
+    scale: TIER_ARMOR_FLAT, format: fmtFlatPlus('armor')
   },
-
-  // Enemy movement debuff
   QUALITY_ASSURANCE: {
     name: 'Quality Assurance',
-    description: 'Slows enemies by -30% movement speed',
-    modifier: {
-      target: 'movementSpeed',
-      value: 0.7,
-      appliesToTeam: 'enemies'
-    }
+    target: 'movementSpeed', appliesToTeam: 'enemies',
+    scale: TIER_DEBUFF_MULT, format: fmtDebuff('enemy move speed')
   },
-
-  // Player movement boost
   AGILE_DEVELOPMENT: {
     name: 'Agile Development',
-    description: 'Increases team movement speed by +25%',
-    modifier: {
-      target: 'movementSpeed',
-      value: 1.25,
-      appliesToTeam: 'players'
-    }
+    target: 'movementSpeed', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('move speed')
   },
-
-  // Enemy attack reduction
   NETWORK_SECURITY: {
     name: 'Network Security',
-    description: 'Reduces enemy attack by -30%',
-    modifier: {
-      target: 'attack',
-      value: 0.7,
-      appliesToTeam: 'enemies'
-    }
+    target: 'attack', appliesToTeam: 'enemies',
+    scale: TIER_DEBUFF_MULT, format: fmtDebuff('enemy attack')
   },
-
-  // Range increase
   ARCHITECT: {
     name: 'Architect',
-    description: 'Increases team attack range by +40%',
-    modifier: {
-      target: 'attackRange',
-      value: 1.4,
-      appliesToTeam: 'players'
-    }
+    target: 'attackRange', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack range')
+  },
+
+  // --- 20 NEW corporate-jargon attributes ---
+  SYNERGIZE: {
+    name: 'Synergize',
+    target: 'attack', appliesToTeam: 'all',
+    scale: TIER_BUFF_MULT, format: fmtBuff('team attack')
+  },
+  PIVOT_STRATEGY: {
+    name: 'Pivot Strategy',
+    target: 'movementSpeed', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('move speed')
+  },
+  BANDWIDTH_OPTIMIZATION: {
+    name: 'Bandwidth Optimization',
+    target: 'attackSpeed', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack speed')
+  },
+  SCALE_OPERATIONS: {
+    name: 'Scale Operations',
+    target: 'maxHealth', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('max health')
+  },
+  LONG_TAIL_STRATEGY: {
+    name: 'Long-Tail Strategy',
+    target: 'attackRange', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack range')
+  },
+  RISK_MITIGATION: {
+    name: 'Risk Mitigation',
+    target: 'armor', appliesToTeam: 'players',
+    scale: TIER_ARMOR_FLAT, format: fmtFlatPlus('armor')
+  },
+  STREAMLINE_WORKFLOW: {
+    name: 'Streamline Workflow',
+    target: 'attack', appliesToTeam: 'enemies',
+    scale: TIER_DEBUFF_MULT, format: fmtDebuff('enemy attack')
+  },
+  COST_REDUCTION: {
+    name: 'Cost Reduction',
+    target: 'maxHealth', appliesToTeam: 'enemies',
+    scale: TIER_DEBUFF_MULT, format: fmtDebuff('enemy max health')
+  },
+  MOVE_THE_NEEDLE: {
+    name: 'Move the Needle',
+    target: 'attack', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack')
+  },
+  DEEP_DIVE: {
+    name: 'Deep Dive',
+    target: 'armor', appliesToTeam: 'enemies',
+    scale: TIER_ARMOR_REDUCTION, format: fmtFlatMinus('enemy armor')
+  },
+  CIRCLE_BACK: {
+    name: 'Circle Back',
+    target: 'maxHealth', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('max health')
+  },
+  TOUCH_BASE: {
+    name: 'Touch Base',
+    target: 'attackSpeed', appliesToTeam: 'all',
+    scale: TIER_BUFF_MULT, format: fmtBuff('team attack speed')
+  },
+  QUARTERLY_EARNINGS: {
+    name: 'Quarterly Earnings',
+    target: 'maxHealth', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('max health')
+  },
+  OPEN_THE_KIMONO: {
+    name: 'Open the Kimono',
+    target: 'armor', appliesToTeam: 'enemies',
+    scale: TIER_ARMOR_REDUCTION, format: fmtFlatMinus('enemy armor')
+  },
+  ACTION_ITEMS: {
+    name: 'Action Items',
+    target: 'attackSpeed', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack speed')
+  },
+  BOIL_THE_OCEAN: {
+    name: 'Boil the Ocean',
+    target: 'attackRange', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack range')
+  },
+  REORGANIZATION: {
+    name: 'Reorganization',
+    target: 'movementSpeed', appliesToTeam: 'enemies',
+    scale: TIER_DEBUFF_MULT, format: fmtDebuff('enemy move speed')
+  },
+  DISRUPTIVE_INNOVATION: {
+    name: 'Disruptive Innovation',
+    target: 'attack', appliesToTeam: 'players',
+    scale: TIER_BUFF_MULT, format: fmtBuff('attack')
+  },
+  STAKEHOLDER_BUY_IN: {
+    name: 'Stakeholder Buy-In',
+    target: 'attackSpeed', appliesToTeam: 'all',
+    scale: TIER_BUFF_MULT, format: fmtBuff('team attack speed')
+  },
+  GOING_FORWARD: {
+    name: 'Going Forward',
+    target: 'movementSpeed', appliesToTeam: 'all',
+    scale: TIER_BUFF_MULT, format: fmtBuff('team move speed')
   }
 };
 
+// ===== Rolling / instantiation =====
+
 /**
- * Get a random attribute for a player
+ * Roll a single tier weighted by RARITY_WEIGHTS.
  */
+function rollTier() {
+  const total = Object.values(RARITY_WEIGHTS).reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (const tier of RARITIES) {
+    r -= RARITY_WEIGHTS[tier];
+    if (r <= 0) return tier;
+  }
+  return 'common'; // fallback
+}
+
+/**
+ * Roll a single (key, tier) pair. Each attribute key is equally weighted; the
+ * tier is rolled independently with RARITY_WEIGHTS.
+ */
+function rollOneChoice() {
+  const keys = Object.keys(ATTRIBUTES);
+  const key = keys[Math.floor(Math.random() * keys.length)];
+  const tier = rollTier();
+  return { key, tier };
+}
+
+/**
+ * Roll `count` distinct (key, tier) pairs - by attribute key, so a player
+ * can't be offered the same attribute twice in one selection screen. Tiers
+ * can repeat across the slots.
+ */
+function rollAttributeChoices(count = 3) {
+  const keys = Object.keys(ATTRIBUTES);
+  const picked = new Set();
+  const choices = [];
+  // Defensive: if more choices requested than attributes exist, cap.
+  const limit = Math.min(count, keys.length);
+  let safety = 0;
+  while (choices.length < limit && safety < 200) {
+    safety++;
+    const { key, tier } = rollOneChoice();
+    if (picked.has(key)) continue;
+    picked.add(key);
+    choices.push(buildOfferedChoice(key, tier));
+  }
+  return choices;
+}
+
+/**
+ * Build a serializable description of an offered choice for the client
+ * picker UI. Includes everything the modal needs (name, formatted effect
+ * text, tier label, tier color) so the client doesn't need its own copy of
+ * the attribute tables.
+ */
+function buildOfferedChoice(key, tier) {
+  const tpl = ATTRIBUTES[key];
+  if (!tpl) return null;
+  const value = tpl.scale[tier];
+  return {
+    key,
+    tier,
+    tierLabel: TIER_LABELS[tier],
+    tierColor: TIER_COLORS[tier],
+    name: tpl.name,
+    effect: tpl.format(tier, value)
+  };
+}
+
+/**
+ * Materialize an attribute INSTANCE the player can store in player.attributes.
+ * This is what gets pushed into player.attributes when they pick a choice.
+ * Includes the modifier the recompute engine reads, plus the metadata the
+ * HUD uses to color the entry in the "YOUR ATTRIBUTES:" panel.
+ */
+function instantiateAttribute(key, tier) {
+  const tpl = ATTRIBUTES[key];
+  if (!tpl) return null;
+  const value = tpl.scale[tier];
+  return {
+    key,
+    name: tpl.name,
+    tier,
+    tierLabel: TIER_LABELS[tier],
+    tierColor: TIER_COLORS[tier],
+    description: tpl.format(tier, value),
+    modifier: {
+      target: tpl.target,
+      value,
+      appliesToTeam: tpl.appliesToTeam
+    }
+  };
+}
+
+// ===== Back-compat exports =====
+// These are referenced in older code paths (e.g. legacy auto-assign on player
+// join). Kept so nothing breaks if we miss an import update.
+
 function getRandomAttribute() {
-  const keys = Object.keys(ATTRIBUTES);
-  const randomKey = keys[Math.floor(Math.random() * keys.length)];
-  return ATTRIBUTES[randomKey];
+  const choice = rollOneChoice();
+  return instantiateAttribute(choice.key, choice.tier);
 }
 
-/**
- * Get attributes by name
- */
 function getAttributeByName(name) {
-  const keys = Object.keys(ATTRIBUTES);
-  const key = keys.find(k => ATTRIBUTES[k].name === name);
-  return key ? ATTRIBUTES[key] : null;
+  const key = Object.keys(ATTRIBUTES).find(k => ATTRIBUTES[k].name === name);
+  return key ? instantiateAttribute(key, 'common') : null;
 }
 
-/**
- * Get all available attributes
- */
 function getAllAttributes() {
-  return Object.values(ATTRIBUTES);
+  return Object.entries(ATTRIBUTES).map(([key, tpl]) => ({
+    key, name: tpl.name, target: tpl.target, appliesToTeam: tpl.appliesToTeam
+  }));
 }
 
 module.exports = {
   ATTRIBUTES,
+  RARITIES,
+  RARITY_WEIGHTS,
+  TIER_COLORS,
+  TIER_LABELS,
+  rollAttributeChoices,
+  instantiateAttribute,
+  buildOfferedChoice,
+  // back-compat
   getRandomAttribute,
   getAttributeByName,
   getAllAttributes

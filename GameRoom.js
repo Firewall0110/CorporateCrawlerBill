@@ -1,7 +1,7 @@
 const Player = require('./Player');
 const Enemy = require('./Enemy');
 const Boss = require('./Boss');
-const { getRandomAttribute } = require('./CharacterAttributes');
+const { rollAttributeChoices, instantiateAttribute } = require('./CharacterAttributes');
 
 // Debug flag - set to true for verbose logging
 const DEBUG = process.env.DEBUG === 'true';
@@ -643,6 +643,12 @@ class GameRoom {
       zoneIndex: this.currentZoneIndex
     });
 
+    // Offer every player a fresh 3-attribute pick at the start of the new
+    // stage. They keep their existing attributes; the new one stacks.
+    this.players.forEach((_, socketId) => {
+      this.offerAttributeChoices(socketId, 'stage-start');
+    });
+
     this.stageTransition = null;
     debugLog(`[Stage] Now in ${nextStage.name}`);
   }
@@ -860,16 +866,17 @@ class GameRoom {
 
   /**
    * Add player to room
+   *
+   * Players start with NO attributes - they pick one from a tier-rolled set
+   * of 3 choices via the on-screen modal (offerAttributeChoices below). They
+   * get another choice at the start of every stage. Attributes stack.
    */
   addPlayer(socketId, playerData) {
-    // Assign a random character attribute if not specified
-    const attribute = getRandomAttribute();
-
     const player = new Player(
       socketId,
       playerData.name || `Player ${this.players.size + 1}`,
       playerData.color || this.getRandomColor(),
-      [attribute]
+      [] // start empty - the picker modal will populate this
     );
 
     // Set initial position spread - mid play-area depth so they're visible
@@ -881,13 +888,18 @@ class GameRoom {
 
     this.players.set(socketId, player);
 
-    // Recompute effective stats with new player
+    // Recompute effective stats with new player (no attrs yet)
     this.recomputeAllEffectiveStats();
 
     // Broadcast player joined
     this.io.to(this.id).emit('playerJoined', {
       player: player.getState()
     });
+
+    // Offer the new player their first 3 attribute choices (initial roll).
+    // They can pick any time; their character spawns without bonuses until
+    // they do. We don't gate the game on this - other players keep moving.
+    this.offerAttributeChoices(socketId, 'game-start');
 
     // Start game if we have 2+ players
     if (this.players.size >= 2 && this.status === 'waiting') {
@@ -897,6 +909,41 @@ class GameRoom {
       debugLog(`Game started! First wave will spawn at ${this.nextWaveSpawnTime}`);
       this.io.to(this.id).emit('gameStarted');
     }
+  }
+
+  /**
+   * Roll 3 attribute choices and send them to a specific player. The client
+   * shows a modal; on click, server.js relays a 'selectAttribute' event back
+   * which calls applyAttributeSelection() below.
+   *
+   * `reason` is one of 'game-start' | 'stage-start' - used by the client to
+   * tweak modal styling (e.g. show "Stage N start!" header for stage rolls).
+   */
+  offerAttributeChoices(socketId, reason = 'stage-start') {
+    const choices = rollAttributeChoices(3);
+    this.io.to(socketId).emit('attributeChoicesOffered', {
+      choices,
+      reason,
+      stageName: this.zoneConfig[this.currentZoneIndex]?.name || ''
+    });
+  }
+
+  /**
+   * Player clicked one of the offered choices. We trust the (key, tier) pair
+   * the client sent back as long as it matches the schema - the client picked
+   * from a server-generated list, so this is a low-trust but cheap path.
+   * If you wanted strict anti-cheat: cache the offered triple per player and
+   * verify the chosen index against that cache. For a coop game it's fine.
+   */
+  applyAttributeSelection(socketId, key, tier) {
+    const player = this.players.get(socketId);
+    if (!player) return;
+    const attr = instantiateAttribute(key, tier);
+    if (!attr) return;
+    player.attributes.push(attr);
+    this.recomputeAllEffectiveStats();
+    // Broadcast updated player state so the HUD picks up the new attribute
+    this.io.to(this.id).emit('playerJoined', { player: player.getState() });
   }
 
   /**

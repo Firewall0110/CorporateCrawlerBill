@@ -41,9 +41,14 @@ class Player extends Unit {
     const baseState = super.getState();
     return {
       ...baseState,
+      // Include tier metadata so the HUD can color each entry by rarity.
       attributes: this.attributes.map(attr => ({
+        key: attr.key,
         name: attr.name,
-        description: attr.description
+        description: attr.description,
+        tier: attr.tier,
+        tierLabel: attr.tierLabel,
+        tierColor: attr.tierColor
       }))
     };
   }

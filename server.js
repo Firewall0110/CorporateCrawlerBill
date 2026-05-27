@@ -122,6 +122,14 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Player picked one of the three offered attribute choices
+  socket.on('selectAttribute', ({ roomId, key, tier }) => {
+    const room = gameRooms.get(roomId);
+    if (room && typeof key === 'string' && typeof tier === 'string') {
+      room.applyAttributeSelection(socket.id, key, tier);
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`Player disconnected: ${socket.id}`);

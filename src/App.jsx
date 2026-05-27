@@ -139,6 +139,115 @@ const ActionButton = ({
 };
 
 /**
+ * AttributePickerModal - Blocks the screen with 3 rolled attribute choices
+ * the player can pick from. Color-coded by rarity tier. Appears on game
+ * start and at the start of each new stage.
+ *
+ * The card border, glow, and tier label all share the tier's color so the
+ * rarity reads instantly. Hover shimmer for tactile feedback.
+ */
+const AttributePickerModal = ({ choices, reason, stageName, onPick }) => {
+  if (!choices || choices.length === 0) return null;
+
+  const headline = reason === 'game-start'
+    ? 'PICK YOUR FIRST ATTRIBUTE'
+    : `STAGE START: ${stageName?.toUpperCase() || ''}  -  PICK AN ATTRIBUTE`;
+
+  return (
+    <div style={{
+      position: 'fixed',
+      inset: 0,
+      background: 'rgba(0,0,0,0.78)',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 500,
+      fontFamily: '"Press Start 2P", monospace'
+    }}>
+      <div style={{
+        fontSize: 14,
+        color: '#00ffff',
+        textShadow: '0 0 10px #00ffff',
+        marginBottom: 24,
+        textAlign: 'center'
+      }}>
+        {headline}
+      </div>
+      <div style={{
+        display: 'flex',
+        gap: 24,
+        padding: 12,
+        maxWidth: '90vw',
+        flexWrap: 'wrap',
+        justifyContent: 'center'
+      }}>
+        {choices.map((c, i) => (
+          <button
+            key={i}
+            onClick={() => onPick(c)}
+            style={{
+              width: 240,
+              minHeight: 220,
+              padding: 18,
+              cursor: 'pointer',
+              background: 'rgba(10, 10, 25, 0.95)',
+              border: `3px solid ${c.tierColor}`,
+              borderRadius: 10,
+              color: '#fff',
+              fontFamily: 'inherit',
+              textAlign: 'center',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              boxShadow: `0 0 20px ${c.tierColor}55, inset 0 0 20px ${c.tierColor}22`,
+              transition: 'transform 0.15s, box-shadow 0.15s'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.transform = 'translateY(-4px) scale(1.03)';
+              e.currentTarget.style.boxShadow = `0 0 30px ${c.tierColor}aa, inset 0 0 25px ${c.tierColor}55`;
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.transform = '';
+              e.currentTarget.style.boxShadow = `0 0 20px ${c.tierColor}55, inset 0 0 20px ${c.tierColor}22`;
+            }}
+          >
+            <div style={{
+              fontSize: 9,
+              letterSpacing: 1.5,
+              color: c.tierColor,
+              textShadow: `0 0 6px ${c.tierColor}`
+            }}>{c.tierLabel}</div>
+            <div style={{
+              fontSize: 12,
+              color: c.tierColor,
+              textShadow: `0 0 6px ${c.tierColor}`,
+              margin: '12px 0 8px',
+              lineHeight: 1.3
+            }}>{c.name}</div>
+            <div style={{
+              fontSize: 10,
+              color: '#ddd',
+              lineHeight: 1.5,
+              flexGrow: 1,
+              display: 'flex',
+              alignItems: 'center'
+            }}>{c.effect}</div>
+            <div style={{
+              marginTop: 8,
+              fontSize: 8,
+              color: c.tierColor,
+              opacity: 0.7
+            }}>CLICK TO SELECT</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+};
+
+/**
  * SpriteVariantToggle - Tiny "A | B" pill in the bottom HUD that lets the
  * user flip between the two candidate Bill sprite sheets. Clicking the
  * inactive side switches the variant (writes localStorage and reloads).
@@ -763,6 +872,11 @@ const BeatEmUpGame = () => {
   const [levelWon, setLevelWon] = useState(false);
   // Stage transition state: { fromName, toName, until } shown as overlay
   const [stageTransition, setStageTransition] = useState(null);
+  // Attribute picker state: { choices: [{key,tier,tierLabel,tierColor,name,effect}],
+  //                           reason: 'game-start' | 'stage-start',
+  //                           stageName: string }
+  // Cleared once the player picks one (or 'sentinel' for none-pending).
+  const [attributeChoices, setAttributeChoices] = useState(null);
 
   const canvasRef = useRef(null);
   const keysPressed = useRef({});
@@ -1023,6 +1137,12 @@ const BeatEmUpGame = () => {
     newSocket.on('error', ({ message }) => {
       setError(message);
       setTimeout(() => setError(''), 3000);
+    });
+
+    // Server rolled 3 attribute choices for us (on game start or stage start).
+    // Show the picker modal until the player clicks one.
+    newSocket.on('attributeChoicesOffered', ({ choices, reason, stageName }) => {
+      setAttributeChoices({ choices, reason, stageName });
     });
 
     setSocket(newSocket);
@@ -1790,6 +1910,23 @@ const BeatEmUpGame = () => {
               </div>
             )}
           </div>
+
+          {/* Attribute picker modal - blocks the screen with 3 rolled
+              choices on game start and at every stage start. Player keeps
+              the picked attribute for the rest of the run; picks stack. */}
+          {attributeChoices && (
+            <AttributePickerModal
+              choices={attributeChoices.choices}
+              reason={attributeChoices.reason}
+              stageName={attributeChoices.stageName}
+              onPick={(choice) => {
+                if (socket && roomId) {
+                  socket.emit('selectAttribute', { roomId, key: choice.key, tier: choice.tier });
+                }
+                setAttributeChoices(null);
+              }}
+            />
+          )}
 
           {/* Mobile Touch Controls - only on touch devices */}
           {isMobile && (
@@ -3249,9 +3386,12 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
     ctx.fillText('YOUR ATTRIBUTES:', 10, y);
     y += 12;
 
+    // Color each entry by tier so rarity reads at a glance
     thisPlayer.attributes.forEach(attr => {
-      ctx.fillStyle = '#ffff00';
-      ctx.fillText(`• ${attr.name}`, 15, y);
+      ctx.fillStyle = attr.tierColor || '#ffff00';
+      // Show name + tiny tier tag, e.g. "• Synergize  [MYTHIC]"
+      const tierTag = attr.tierLabel ? `  [${attr.tierLabel}]` : '';
+      ctx.fillText(`• ${attr.name}${tierTag}`, 15, y);
       y += 11;
     });
   }
