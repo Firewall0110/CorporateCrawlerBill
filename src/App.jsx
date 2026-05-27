@@ -2137,22 +2137,31 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
  */
 function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, isMe, now, frame, sinceHit) {
   const sprite = frame.sprite;
-  // Render each frame at its native source pixel dimensions. The SpriteLoader
-  // returns full cells (variable width per row in the new sheet, e.g. 154 px
-  // for the 5-frame walk row, 128 px for the 6-frame KO row) so the body sits
-  // in a consistent position within each cell. FX (special's bubble, kick's
-  // motion lines) appear at the relative size the artist drew them.
+  // Sprite canvases are now bbox-tight (variable width per frame so wide
+  // poses like the SPECIAL globe or the extended kick get extra room).
+  // We anchor by sprite.anchorX / anchorY (set by SpriteLoader to the body
+  // center / feet within the bbox) instead of canvas center, so the body
+  // stays at a fixed screen position while limbs / FX extend asymmetrically.
   const SPRITE_SCALE = 1.0;
   const drawW = sprite.canvas.width * SPRITE_SCALE;
   const drawH = sprite.canvas.height * SPRITE_SCALE;
   const cx = screenX + w / 2;
   const feetY = screenY + h;
-  const drawX = cx - drawW / 2;
-  const drawY = feetY - drawH + bobAmount;
+  // anchorX/anchorY default to canvas center/bottom if missing (back-compat)
+  const aX = (sprite.anchorX != null ? sprite.anchorX : sprite.canvas.width / 2) * SPRITE_SCALE;
+  const aY = (sprite.anchorY != null ? sprite.anchorY : sprite.canvas.height) * SPRITE_SCALE;
 
   // The sheet draws every character facing right; the SpriteLoader sets
   // frame.mirror=true whenever the unit is facing left so we flip the draw.
   const shouldMirror = !!frame.mirror;
+
+  // drawX picked so the BODY anchor lands at cx regardless of mirror state.
+  //   Normal:  body at (drawX + aX)               -> drawX = cx - aX
+  //   Mirror:  body at (drawX + drawW - aX)       -> drawX = cx - drawW + aX
+  // Asymmetric frames (punch fist extending right) would otherwise shift the
+  // body off-center when the unit faces left.
+  const drawX = shouldMirror ? (cx - drawW + aX) : (cx - aX);
+  const drawY = feetY - aY + bobAmount;
 
   ctx.save();
 
@@ -2204,7 +2213,8 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   // flash already sells the impact (and the attackCooldown reset stuns them
   // mechanically on the server side, which reads visually as a stagger).
   if (hitFlash && unit.team === 'players') {
-    const headY = drawY + 10; // top of sprite cell ~ above the head
+    // bbox-tight sprites start AT the head; push stars above the head top
+    const headY = drawY - 6;
     drawStunStars(ctx, cx, headY, sinceHit);
   }
 

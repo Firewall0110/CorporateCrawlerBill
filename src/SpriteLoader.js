@@ -99,14 +99,18 @@ const ANIM = {
   SPECIAL: { rowIndex: 5, frameCount: 7 }
 };
 
-// ===== Chroma key (single dominant background color, generous threshold) =====
+// ===== Chroma key (flood-fill from edges, tight tolerance) =====
 //
-// The user explicitly asked for "no magenta halo from the characters". JPEG
-// compression bleeds magenta-toward-skin pixels at the character outline.
-// Using a wider distance threshold catches those near-magenta halo pixels
-// (and the slightly-darker pink cell borders) without bleeding into skin /
-// hair / clothing / boots, which are all far from magenta in RGB space.
-const CHROMA_DIST_SQ = 85 * 85; // ~7225
+// Previous version: distance-threshold match against the bg magenta. That
+// blanket-matched every magenta-ish pixel in the sheet, including the pink
+// highlights inside the SPECIAL globe FX and the bubble's interior glow -
+// they got punched out, leaving a hole through the middle of the effect.
+//
+// New version: flood-fill from the four edges using a TIGHT color tolerance.
+// Only magenta pixels that are reachable through other magenta from the
+// outside become transparent. Interior pink-tinted FX pixels (bubble glow,
+// lightning sparks, etc.) are not edge-reachable, so they survive.
+const CHROMA_DIST_SQ = 38 * 38; // tight - just JPEG noise tolerance (~1444)
 
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -138,13 +142,11 @@ function processSheet(img) {
     return canvas;
   }
 
-  // Find the dominant background magenta. We sample multiple TOP edge points
-  // (they're guaranteed to be pure background since the character cells start
-  // below row 0). Averaging absorbs JPEG noise.
+  // Find dominant background magenta from edge samples (averaged for JPEG noise).
   const samplePoints = [];
   for (let x = 5; x < w - 5; x += Math.max(1, Math.floor(w / 20))) {
-    samplePoints.push([x, 2]);            // near top edge
-    samplePoints.push([x, h - 3]);        // near bottom edge
+    samplePoints.push([x, 2]);
+    samplePoints.push([x, h - 3]);
   }
   let sumR = 0, sumG = 0, sumB = 0;
   for (const [x, y] of samplePoints) {
@@ -155,24 +157,64 @@ function processSheet(img) {
   const bgG = sumG / samplePoints.length;
   const bgB = sumB / samplePoints.length;
   console.log(
-    `[SpriteLoader] BillSpriteSheet: ${w}x${h}, chromakey rgb(${Math.round(bgR)},${Math.round(bgG)},${Math.round(bgB)}), threshold ${Math.sqrt(CHROMA_DIST_SQ).toFixed(0)}`
+    `[SpriteLoader] BillSpriteSheet: ${w}x${h}, chromakey rgb(${Math.round(bgR)},${Math.round(bgG)},${Math.round(bgB)}), tol ${Math.sqrt(CHROMA_DIST_SQ).toFixed(0)} (flood-fill)`
   );
 
+  // Predicate: is this pixel close enough to the bg magenta to be background?
+  const isBg = (idx) => {
+    const dr = data[idx] - bgR;
+    const dg = data[idx + 1] - bgG;
+    const db = data[idx + 2] - bgB;
+    return dr * dr + dg * dg + db * db < CHROMA_DIST_SQ;
+  };
+
+  // Flood fill from all four edges through bg-tolerant pixels.
+  // visited bit-array doubles as "marked for transparency" - any pixel we
+  // walked through is bg-connected. Iterative stack (not recursion) so we
+  // don't blow the call stack on large floods.
+  const visited = new Uint8Array(w * h);
+  const stack = new Int32Array(w * h * 2);
+  let sp = 0;
+  const push = (x, y) => {
+    const ptr = y * w + x;
+    if (visited[ptr]) return;
+    if (!isBg(ptr * 4)) return;
+    visited[ptr] = 1;
+    stack[sp++] = x;
+    stack[sp++] = y;
+  };
+
+  for (let x = 0; x < w; x++) {
+    push(x, 0);
+    push(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    push(0, y);
+    push(w - 1, y);
+  }
+
+  while (sp > 0) {
+    const y = stack[--sp];
+    const x = stack[--sp];
+    if (x > 0)     push(x - 1, y);
+    if (x < w - 1) push(x + 1, y);
+    if (y > 0)     push(x, y - 1);
+    if (y < h - 1) push(x, y + 1);
+  }
+
+  // Apply: any visited (edge-connected bg) pixel -> alpha 0
   let removed = 0;
-  for (let i = 0; i < data.length; i += 4) {
-    const dr = data[i] - bgR;
-    const dg = data[i + 1] - bgG;
-    const db = data[i + 2] - bgB;
-    if (dr * dr + dg * dg + db * db < CHROMA_DIST_SQ) {
-      data[i + 3] = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (visited[i]) {
+      data[i * 4 + 3] = 0;
       removed++;
     }
   }
   const transparentRatio = removed / (w * h);
   console.log(
-    `[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after chroma key`
+    `[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after flood-fill chroma key`
   );
-  if (transparentRatio < 0.30) {
+  if (transparentRatio < 0.20) {
     throw new Error(`Chroma key failed: only ${(transparentRatio * 100).toFixed(1)}% transparent`);
   }
 
@@ -180,36 +222,156 @@ function processSheet(img) {
   return canvas;
 }
 
-// ===== Frame slicing =====
+// ===== Frame slicing (wide source + seed-flood + bbox crop) =====
+//
+// The art frequently extends beyond its nominal cell - the punch fist
+// reaches into the next cell, the kick leg sweeps past the cell border,
+// the SPECIAL globe is wider than a single cell. We need a slicing scheme
+// that captures those extensions without picking up the NEIGHBOR cell's
+// character body (which would draw as ghost duplicates in every frame).
+//
+// Per-frame algorithm:
+//   1. Crop a SOURCE REGION wider than the cell (cell + horizontal margin).
+//   2. Flood-fill from a seed point at the cell's body center, walking
+//      through any opaque pixel. The connected component starting at the
+//      seed = this character + its extended limbs / FX, isolated from
+//      neighbor characters that aren't pixel-connected to it.
+//   3. Bbox the connected component, copy ONLY those pixels into the output
+//      canvas. Anything in the source region that wasn't seed-connected
+//      (the neighbor's body) is discarded.
+//   4. Compute anchorX / anchorY from the bbox so the BODY (not the canvas
+//      center) lines up with the unit's bounding box at render time.
+//
+// Result: each frame's canvas is sized to its actual content extent. Walk
+// frames stay narrow, the SPECIAL frame with the bubble is wide, and the
+// body's screen position is stable across frame transitions.
 
-function cropFrame(sheet, sx, sy, frameW, frameH) {
-  const frameCanvas = document.createElement('canvas');
-  frameCanvas.width = frameW;
-  frameCanvas.height = frameH;
-  const frameCtx = frameCanvas.getContext('2d');
-  frameCtx.imageSmoothingEnabled = false;
-  frameCtx.drawImage(sheet, sx, sy, frameW, frameH, 0, 0, frameW, frameH);
+// Horizontal margin per side as a fraction of the cell width. 0.5 = grab
+// half a cell on each side. The seed-flood then prunes anything that isn't
+// connected to the focal cell's character.
+const FRAME_MARGIN_FRAC = 0.5;
 
-  // Sanity check: skip near-empty cells so picker falls back to neighbor.
-  // Threshold ~3% of cell area opaque feels right for "this cell actually
-  // contains a character" - empty cells average <0.5%.
-  const data = frameCtx.getImageData(0, 0, frameW, frameH).data;
-  let opaqueCount = 0;
-  const minOpaque = Math.floor(frameW * frameH * 0.03);
-  for (let i = 3; i < data.length; i += 4) {
-    if (data[i] > 0) {
-      opaqueCount++;
-      if (opaqueCount >= minOpaque) break;
+function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
+  const sheetW = sheet.width;
+  const marginX = Math.floor(cellW * FRAME_MARGIN_FRAC);
+  const srcX = Math.max(0, cellX - marginX);
+  const srcRight = Math.min(sheetW, cellX + cellW + marginX);
+  const srcW = srcRight - srcX;
+  const srcH = cellH;
+
+  // Pull just the wide source region into a working canvas.
+  const work = document.createElement('canvas');
+  work.width = srcW;
+  work.height = srcH;
+  const workCtx = work.getContext('2d');
+  workCtx.imageSmoothingEnabled = false;
+  workCtx.drawImage(sheet, srcX, cellY, srcW, srcH, 0, 0, srcW, srcH);
+
+  const imgData = workCtx.getImageData(0, 0, srcW, srcH);
+  const data = imgData.data;
+
+  // Seed = cell's body-center column, roughly mid-torso vertically. The
+  // exact seed pixel may be transparent (e.g. between legs); walk outward
+  // in a small spiral until we hit an opaque pixel to start the flood from.
+  const seedX = (cellX - srcX) + Math.floor(cellW / 2);
+  const seedY = Math.floor(srcH * 0.55);
+
+  let startX = -1, startY = -1;
+  const SEARCH_R = Math.max(16, Math.floor(cellW * 0.3));
+  outer: for (let r = 0; r <= SEARCH_R; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dx = -r; dx <= r; dx++) {
+        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // only ring
+        const px = seedX + dx, py = seedY + dy;
+        if (px < 0 || px >= srcW || py < 0 || py >= srcH) continue;
+        if (data[(py * srcW + px) * 4 + 3] > 0) {
+          startX = px; startY = py;
+          break outer;
+        }
+      }
     }
   }
-  if (opaqueCount < minOpaque) return null;
+  if (startX < 0) return null; // empty cell
 
+  // Flood fill from seed through any opaque pixel. 4-connectivity is
+  // enough - artist's pixels are dense enough that we don't drop anything
+  // intentional, but won't bridge across the magenta gap to a neighbor.
+  const kept = new Uint8Array(srcW * srcH);
+  const fstack = new Int32Array(srcW * srcH * 2);
+  let fsp = 0;
+  const fpush = (x, y) => {
+    if (x < 0 || x >= srcW || y < 0 || y >= srcH) return;
+    const ptr = y * srcW + x;
+    if (kept[ptr]) return;
+    if (data[ptr * 4 + 3] === 0) return;
+    kept[ptr] = 1;
+    fstack[fsp++] = x; fstack[fsp++] = y;
+  };
+  fpush(startX, startY);
+  while (fsp > 0) {
+    const y = fstack[--fsp];
+    const x = fstack[--fsp];
+    fpush(x - 1, y); fpush(x + 1, y);
+    fpush(x, y - 1); fpush(x, y + 1);
+  }
+
+  // Bbox the kept component.
+  let minX = srcW, minY = srcH, maxX = -1, maxY = -1;
+  for (let py = 0; py < srcH; py++) {
+    for (let px = 0; px < srcW; px++) {
+      if (kept[py * srcW + px]) {
+        if (px < minX) minX = px;
+        if (px > maxX) maxX = px;
+        if (py < minY) minY = py;
+        if (py > maxY) maxY = py;
+      }
+    }
+  }
+  if (maxX < 0) return null;
+
+  const bboxW = maxX - minX + 1;
+  const bboxH = maxY - minY + 1;
+
+  // Sanity check: too-tiny component is probably just a stray pixel cluster.
+  if (bboxW * bboxH < 200) return null;
+
+  // Build output canvas: only seed-connected pixels survive.
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = bboxW;
+  outCanvas.height = bboxH;
+  const outCtx = outCanvas.getContext('2d');
+  outCtx.imageSmoothingEnabled = false;
+  const outData = outCtx.createImageData(bboxW, bboxH);
+  const out = outData.data;
+  for (let py = 0; py < bboxH; py++) {
+    for (let px = 0; px < bboxW; px++) {
+      const sPtr = (py + minY) * srcW + (px + minX);
+      if (!kept[sPtr]) continue;
+      const sIdx = sPtr * 4;
+      const oIdx = (py * bboxW + px) * 4;
+      out[oIdx]     = data[sIdx];
+      out[oIdx + 1] = data[sIdx + 1];
+      out[oIdx + 2] = data[sIdx + 2];
+      out[oIdx + 3] = data[sIdx + 3];
+    }
+  }
+  outCtx.putImageData(outData, 0, 0);
+
+  // Anchors:
+  //   anchorX = body's horizontal center within the bbox. The body is
+  //     centered at cell center in sheet coords = seedX in source coords =
+  //     (seedX - minX) in bbox coords. Even when the bbox extends asymmetric-
+  //     ally (e.g. punch fist extends right), the body stays at this anchor.
+  //   anchorY = body's feet within the bbox. Feet sit at the cell bottom
+  //     (cellH - 1 in source coords) = (cellH - 1 - minY) in bbox coords.
+  const anchorX = seedX - minX;
+  const anchorY = (cellH - 1) - minY + 1; // +1: feet AT bottom edge
   return {
-    canvas: frameCanvas,
-    width: frameW,
-    height: frameH,
-    anchorX: frameW / 2,
-    anchorY: frameH // feet at bottom for ground alignment
+    canvas: outCanvas,
+    width: bboxW,
+    height: bboxH,
+    anchorX,
+    anchorY
   };
 }
 
@@ -217,25 +379,30 @@ function sliceAnimations(sheet) {
   const sprites = {};
   const cellW = Math.floor(sheet.width / GRID_COLS);
   const cellH = Math.floor(sheet.height / GRID_ROWS);
-  // Defense: ensure we'll never slice into the label column
   if (FIRST_FRAME_COL <= LABEL_COL) {
     throw new Error('FIRST_FRAME_COL must be > LABEL_COL');
   }
   for (const [name, anim] of Object.entries(ANIM)) {
     const frames = [];
     let validCount = 0;
+    let dimsLog = '';
     for (let i = 0; i < anim.frameCount; i++) {
       const col = FIRST_FRAME_COL + i;
-      if (col >= GRID_COLS) break; // safety
-      const sx = col * cellW;
-      const sy = anim.rowIndex * cellH;
-      const frame = cropFrame(sheet, sx, sy, cellW, cellH);
-      frames.push(frame); // may be null - picker handles
-      if (frame) validCount++;
+      if (col >= GRID_COLS) break;
+      const cellX = col * cellW;
+      const cellY = anim.rowIndex * cellH;
+      const frame = cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH);
+      frames.push(frame);
+      if (frame) {
+        validCount++;
+        if (i === 0 || i === Math.floor(anim.frameCount / 2)) {
+          dimsLog += ` [${i}]${frame.width}x${frame.height}`;
+        }
+      }
     }
     sprites[name] = frames;
     console.log(
-      `[SpriteLoader] ${name}: row ${anim.rowIndex}, ${validCount}/${frames.length} valid frames @ ${cellW}x${cellH}`
+      `[SpriteLoader] ${name}: row ${anim.rowIndex}, ${validCount}/${frames.length} valid frames${dimsLog}`
     );
   }
   return sprites;
