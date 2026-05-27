@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
-import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
+import { loadBillSprites, getBillSprites, pickBillFrame, getSpriteVariant, setSpriteVariant } from './SpriteLoader';
 import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
 import { loadBossSprites, getBossSprites, pickBossFrame, loadBossDeathSprites, pickBossDeathFrame } from './BossSprites';
 
@@ -133,6 +133,67 @@ const ActionButton = ({
         {cooldownKey === 'special' && onCooldown && (
           <span style={{ fontSize: '11px', marginTop: '2px' }}>{remainingSec}s</span>
         )}
+      </div>
+    </div>
+  );
+};
+
+/**
+ * SpriteVariantToggle - Tiny "A | B" pill in the bottom HUD that lets the
+ * user flip between the two candidate Bill sprite sheets. Clicking the
+ * inactive side switches the variant (writes localStorage and reloads).
+ * Visible on both mobile and desktop. Lives in the bottom-right of the
+ * footer so it doesn't fight the centered key hints for attention.
+ */
+const SpriteVariantToggle = () => {
+  const active = getSpriteVariant();
+  const pillBase = {
+    fontFamily: '"Press Start 2P", monospace',
+    fontSize: 8,
+    padding: '4px 8px',
+    cursor: 'pointer',
+    userSelect: 'none',
+    WebkitUserSelect: 'none',
+    border: '1px solid #00ffff',
+    background: 'transparent',
+    color: '#00ffff'
+  };
+  const activeStyle = {
+    background: '#00ffff',
+    color: '#001020',
+    fontWeight: 'bold'
+  };
+  return (
+    <div style={{
+      position: 'absolute',
+      right: 14,
+      top: '50%',
+      transform: 'translateY(-50%)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 6
+    }}>
+      <span style={{ fontSize: 8, color: '#888' }}>SPRITE</span>
+      <div style={{ display: 'flex' }}>
+        <button
+          onClick={() => active !== 'A' && setSpriteVariant('A')}
+          style={{
+            ...pillBase,
+            borderTopLeftRadius: 4,
+            borderBottomLeftRadius: 4,
+            borderRight: 'none',
+            ...(active === 'A' ? activeStyle : {})
+          }}
+        >A</button>
+        <button
+          onClick={() => active !== 'B' && setSpriteVariant('B')}
+          style={{
+            ...pillBase,
+            borderTopRightRadius: 4,
+            borderBottomRightRadius: 4,
+            ...(active === 'B' ? activeStyle : {})
+          }}
+        >B</button>
       </div>
     </div>
   );
@@ -1743,18 +1804,20 @@ const BeatEmUpGame = () => {
             <DesktopAbilityIcons keysPressed={keysPressed} cooldownsRef={cooldownsRef} />
           )}
 
-          {/* Bottom HUD - movement hints. Attack hints are now shown
-              visually on the ability buttons themselves, so we don't
-              duplicate them here. */}
+          {/* Bottom HUD - movement hints + sprite A/B toggle. Attack hints
+              are shown visually on the ability buttons themselves, so we
+              don't duplicate them here. */}
           <div style={{
             padding: '15px',
             background: 'rgba(10, 10, 10, 0.95)',
             borderTop: '2px solid #00ffff',
             display: 'flex',
             justifyContent: 'center',
+            alignItems: 'center',
             gap: '20px',
             fontSize: '9px',
-            flexWrap: 'wrap'
+            flexWrap: 'wrap',
+            position: 'relative'
           }}>
             {!isMobile && (
               <>
@@ -1765,6 +1828,7 @@ const BeatEmUpGame = () => {
             {isMobile && (
               <span>TOUCH CONTROLS BELOW</span>
             )}
+            <SpriteVariantToggle />
           </div>
         </div>
       )}
