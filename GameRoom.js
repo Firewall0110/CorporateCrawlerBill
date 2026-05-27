@@ -244,7 +244,7 @@ class GameRoom {
     const stats = {
       'printer-ticket': {
         maxHealth: 100,    // 5 punches to kill
-        attack: 3,
+        attack: 15,        // 5x bump: 3 -> 15 (mooks now actually threatening)
         attackSpeed: 0.4,  // Reduced from 0.8 - half attack frequency
         armor: 0,
         attackRange: 50,
@@ -253,7 +253,7 @@ class GameRoom {
       },
       'email-ticket': {
         maxHealth: 110,    // 5-6 punches to kill, or 4 kicks
-        attack: 4,
+        attack: 20,        // 5x bump: 4 -> 20
         attackSpeed: 0.4,  // Reduced from 0.8 - half attack frequency
         armor: 0,
         attackRange: 50,
@@ -262,7 +262,7 @@ class GameRoom {
       },
       'network-ticket': {
         maxHealth: 130,    // 7 punches to kill, or 4-5 kicks
-        attack: 6,
+        attack: 30,        // 5x bump: 6 -> 30 (heaviest mook)
         attackSpeed: 0.35, // Reduced from 0.7 - half attack frequency
         armor: 1,
         attackRange: 50,
@@ -666,7 +666,7 @@ class GameRoom {
 
     const bossStats = {
       maxHealth: Math.round(420 * healthMultiplier), // bumped: 300 -> 420
-      attack: 32,            // bumped: 18 -> 32
+      attack: 160,           // 5x bump: 32 -> 160 (boss melee threatens 4-5 shot KO)
       attackSpeed: 1.0,
       armor: 25,             // bumped: 20 -> 25
       attackRange: 180,      // bumped: 150 -> 180

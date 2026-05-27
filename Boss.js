@@ -9,7 +9,7 @@ class Boss extends Enemy {
   constructor(id, name, baseStats = {}, position = { x: 1000, y: 350 }) {
     const bossStats = {
       maxHealth: 500,
-      attack: 32,            // bumped: 20 -> 32 (harder hitting)
+      attack: 160,           // 5x bump: 32 -> 160 (boss hits hard, must dodge)
       attackSpeed: 1.0,
       armor: 25,             // slight bump: 20 -> 25
       attackRange: 180,      // longer reach: 150 -> 180
@@ -35,7 +35,7 @@ class Boss extends Enemy {
         cooldown: 4200,
         telegramDuration: 1400,
         duration: 600,
-        damage: 22,           // bumped: 12 -> 22
+        damage: 110,          // 5x bump: 22 -> 110
         radius: 260,          // bigger radius: 220 -> 260
         lastUsedTime: 0,
         // Counter: Jump over the shockwave OR move out of radius
@@ -46,7 +46,7 @@ class Boss extends Enemy {
         cooldown: 4800,
         telegramDuration: 1600,
         duration: 700,
-        damage: 20,           // bumped: 10 -> 20
+        damage: 100,          // 5x bump: 20 -> 100
         beamWidth: 60,        // wider beam: 50 -> 60
         lastUsedTime: 0,
         // Counter: Move along Y axis (depth) - beam only hits players near boss Y
@@ -57,7 +57,7 @@ class Boss extends Enemy {
         cooldown: 5500,
         telegramDuration: 1800,
         duration: 800,
-        damage: 18,           // bumped: 10 -> 18 per zone
+        damage: 90,           // 5x bump: 18 -> 90 per zone
         zoneCount: 4,         // more zones: 3 -> 4
         zoneRadius: 85,       // bigger zones: 75 -> 85
         lastUsedTime: 0,
