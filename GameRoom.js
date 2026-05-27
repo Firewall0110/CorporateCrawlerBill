@@ -103,12 +103,12 @@ class GameRoom {
       {
         name: 'Garage',
         width: 2500,
-        // High-res rendered backdrop: the foreground drive aisle / open
-        // concrete floor occupies the bottom ~28% of the image. Push the
-        // walkable band down so Bill stands on the polished floor and
-        // doesn't appear to walk through the parked cars or the coffered
-        // concrete ceiling beams.
-        floor: { playAreaTop: 510, groundLevel: 670 },
+        // Walkable band sits on the foreground drive aisle / open concrete
+        // floor. groundLevel capped at 640 so the player sprite (cell ~170 px
+        // tall, drawn bottom-aligned to the 60 px bounding box) never extends
+        // past the 700 px canvas bottom - previously Bill's lower legs were
+        // clipping off-screen at the south edge.
+        floor: { playAreaTop: 510, groundLevel: 640 },
         sections: [
           {
             name: 'Garage - Section 1',
@@ -136,12 +136,12 @@ class GameRoom {
       {
         name: 'Quad',
         width: 2500,
-        // High-res rendered corporate quad backdrop: stone pavement strip
-        // runs along the bottom ~17% of the image (with the planter beds,
-        // sculpture and office buildings behind it). Push the walk band
-        // down so Bill stays on pavement and doesn't appear to walk through
-        // the flower beds, sculpture or the buildings beyond.
-        floor: { playAreaTop: 575, groundLevel: 680 },
+        // Pavement strip is small in this backdrop. groundLevel capped at 640
+        // to keep the player sprite from clipping off the bottom of the
+        // canvas; playAreaTop lowered to 545 (was 575) to preserve roughly
+        // 95 px of walkable depth - Bill will brush the lower edges of the
+        // foreground planters but stays out of the buildings/sculpture.
+        floor: { playAreaTop: 545, groundLevel: 640 },
         sections: [
           {
             name: 'Quad - Section 1',
@@ -169,11 +169,11 @@ class GameRoom {
       {
         name: 'Lobby',
         width: 2500,
-        // The Lobby stage uses a high-res rendered backdrop where the
-        // polished marble floor only occupies the bottom ~28% of the image.
-        // Push the walkable Y band down so characters stand on the floor
-        // and don't walk through the floor-to-ceiling glass wall.
-        floor: { playAreaTop: 510, groundLevel: 670 },
+        // Marble floor occupies the bottom ~28% of the backdrop. groundLevel
+        // capped at 640 (was 670) so Bill's sprite doesn't clip past the
+        // canvas bottom; playAreaTop stays at 510 to keep him out of the
+        // floor-to-ceiling glass wall.
+        floor: { playAreaTop: 510, groundLevel: 640 },
         sections: [
           {
             name: 'Lobby - Section 1',
@@ -200,17 +200,20 @@ class GameRoom {
       },
       {
         name: 'Server Room',
-        width: 1500,
-        // Photoreal Cray Discovery 6 boss arena: server racks and central
-        // supercomputer occupy the back half, with a polished concrete
-        // walkable strip across the bottom ~30% of the image. Bounds give
-        // the boss fight enough vertical depth for evasion while keeping
-        // Bill and the boss visually planted on the foreground floor.
-        floor: { playAreaTop: 510, groundLevel: 685 },
+        // Boss arena width expanded from 1500 -> 2500 to match the scaled
+        // dimensions of stage4.png (1952x544 source scales to ~2511x700
+        // when fit to canvas height). Previously the rightmost ~1000 px of
+        // the backdrop scrolled out of bounds because the world ended at
+        // x=1500. Boss spawns at section center (xRange midpoint = 1250).
+        width: 2500,
+        // groundLevel capped at 640 to stop Bill / boss from clipping off
+        // the canvas bottom; depth of 130 px leaves enough vertical room
+        // for boss-attack evasion.
+        floor: { playAreaTop: 510, groundLevel: 640 },
         sections: [
           {
             name: 'Server Room - Boss',
-            xRange: { start: 0, end: 1500 },
+            xRange: { start: 0, end: 2500 },
             isBoss: true,
             waves: []
           }
