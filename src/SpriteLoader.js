@@ -99,23 +99,24 @@ const ANIM = {
   SPECIAL: { rowIndex: 5, frameCount: 7 }
 };
 
-// ===== Chroma key (flood-fill from edges, moderate tolerance) =====
+// ===== Chroma key (flood-fill from edges, loose tolerance) =====
 //
-// Previous version: distance-threshold match against the bg magenta. That
-// blanket-matched every magenta-ish pixel in the sheet, including the pink
-// highlights inside the SPECIAL globe FX and the bubble's interior glow -
-// they got punched out, leaving a hole through the middle of the effect.
+// Previous distance-threshold match blanket-killed every magenta-ish pixel
+// including pink highlights INSIDE the SPECIAL globe FX. New flood-fill
+// only kills magenta pixels that are reachable from the sheet edges
+// through other magenta, so interior FX pixels survive.
 //
-// New version: flood-fill from the four edges. Only magenta pixels reach-
-// able through other magenta from the outside become transparent. Interior
-// pink-tinted FX pixels (bubble glow, lightning sparks) are not edge-
-// reachable, so they survive even when their color matches the bg.
+// IMPORTANT: this sheet has slightly-darker cell-divider lines between
+// animation cells. The tolerance must be loose enough that the flood can
+// cross those dividers and reach every cell's interior bg - otherwise
+// flood stalls at the sheet perimeter and ~98% of pixels stay opaque.
+// Empirically tol=85 was proven safe by the original distance-match
+// implementation (loaded successfully on this exact sheet); we keep that.
 //
-// Tolerance needs to be loose enough to pass through cell-divider lines
-// (the slightly-darker magenta borders separating animation cells) so the
-// flood reaches every cell's outer perimeter; without that the flood
-// stalls at cell borders and most of the sheet stays opaque.
-const CHROMA_DIST_SQ = 70 * 70; // ~4900 - permissive enough to cross cell borders
+// Character outlines (~280 RGB distance from bg) easily block the flood
+// from penetrating into the character interior, so even at tol=85 skin
+// inside the body is safe.
+const CHROMA_DIST_SQ = 85 * 85; // 7225 - same as the proven-working original
 
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -219,11 +220,17 @@ function processSheet(img) {
   console.log(
     `[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after flood-fill chroma key`
   );
-  // Lower bar (was 0.20) - flood-fill is more conservative than blanket
-  // distance-match, so a smaller absolute transparent ratio still indicates
-  // a working chroma key. Only throw if obviously broken (no flood happened).
-  if (transparentRatio < 0.08) {
-    throw new Error(`Chroma key failed: only ${(transparentRatio * 100).toFixed(1)}% transparent (flood-fill stalled?)`);
+  // NEVER THROW. Even a 0% chroma-key result is OK at this layer - the
+  // per-cell simpleCellCrop fallback will still produce sprites (they'll
+  // just have magenta backgrounds visible instead of being chroma-keyed).
+  // Throwing here was the failure mode that kicked us to the procedural
+  // purple-block character. A degraded sprite is strictly better than no
+  // sprite. If transparent ratio is suspicious, log loudly:
+  if (transparentRatio < 0.10) {
+    console.warn(
+      `[SpriteLoader] Chroma-key transparent ratio is low (${(transparentRatio * 100).toFixed(1)}%). ` +
+      `Flood-fill may have stalled at cell borders. Sprites will still load but may show magenta bg.`
+    );
   }
 
   ctx.putImageData(imageData, 0, 0);
@@ -260,127 +267,133 @@ function processSheet(img) {
 const FRAME_MARGIN_FRAC = 0.5;
 
 function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
-  const sheetW = sheet.width;
-  const marginX = Math.floor(cellW * FRAME_MARGIN_FRAC);
-  const srcX = Math.max(0, cellX - marginX);
-  const srcRight = Math.min(sheetW, cellX + cellW + marginX);
-  const srcW = srcRight - srcX;
-  const srcH = cellH;
+  try {
+    const sheetW = sheet.width;
+    const marginX = Math.floor(cellW * FRAME_MARGIN_FRAC);
+    const srcX = Math.max(0, cellX - marginX);
+    const srcRight = Math.min(sheetW, cellX + cellW + marginX);
+    const srcW = srcRight - srcX;
+    const srcH = cellH;
 
-  // Pull just the wide source region into a working canvas.
-  const work = document.createElement('canvas');
-  work.width = srcW;
-  work.height = srcH;
-  const workCtx = work.getContext('2d');
-  workCtx.imageSmoothingEnabled = false;
-  workCtx.drawImage(sheet, srcX, cellY, srcW, srcH, 0, 0, srcW, srcH);
+    // Pull just the wide source region into a working canvas.
+    const work = document.createElement('canvas');
+    work.width = srcW;
+    work.height = srcH;
+    const workCtx = work.getContext('2d');
+    workCtx.imageSmoothingEnabled = false;
+    workCtx.drawImage(sheet, srcX, cellY, srcW, srcH, 0, 0, srcW, srcH);
 
-  const imgData = workCtx.getImageData(0, 0, srcW, srcH);
-  const data = imgData.data;
+    const imgData = workCtx.getImageData(0, 0, srcW, srcH);
+    const data = imgData.data;
 
-  // Seed = cell's body-center column, roughly mid-torso vertically. The
-  // exact seed pixel may be transparent (e.g. between legs); walk outward
-  // in a small spiral until we hit an opaque pixel to start the flood from.
-  const seedX = (cellX - srcX) + Math.floor(cellW / 2);
-  const seedY = Math.floor(srcH * 0.55);
+    // Seed = cell's body-center column, roughly mid-torso vertically.
+    const seedX = (cellX - srcX) + Math.floor(cellW / 2);
+    const seedY = Math.floor(srcH * 0.55);
 
-  let startX = -1, startY = -1;
-  const SEARCH_R = Math.max(16, Math.floor(cellW * 0.3));
-  outer: for (let r = 0; r <= SEARCH_R; r++) {
-    for (let dy = -r; dy <= r; dy++) {
-      for (let dx = -r; dx <= r; dx++) {
-        if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue; // only ring
-        const px = seedX + dx, py = seedY + dy;
-        if (px < 0 || px >= srcW || py < 0 || py >= srcH) continue;
-        if (data[(py * srcW + px) * 4 + 3] > 0) {
-          startX = px; startY = py;
-          break outer;
+    let startX = -1, startY = -1;
+    const SEARCH_R = Math.max(16, Math.floor(cellW * 0.4));
+    outer: for (let r = 0; r <= SEARCH_R; r++) {
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+          const px = seedX + dx, py = seedY + dy;
+          if (px < 0 || px >= srcW || py < 0 || py >= srcH) continue;
+          if (data[(py * srcW + px) * 4 + 3] > 0) {
+            startX = px; startY = py;
+            break outer;
+          }
         }
       }
     }
-  }
-  if (startX < 0) return null; // empty cell
+    if (startX < 0) return null; // no opaque pixel found - caller falls back
 
-  // Flood fill from seed through any opaque pixel. 4-connectivity is
-  // enough - artist's pixels are dense enough that we don't drop anything
-  // intentional, but won't bridge across the magenta gap to a neighbor.
-  const kept = new Uint8Array(srcW * srcH);
-  const fstack = new Int32Array(srcW * srcH * 2);
-  let fsp = 0;
-  const fpush = (x, y) => {
-    if (x < 0 || x >= srcW || y < 0 || y >= srcH) return;
-    const ptr = y * srcW + x;
-    if (kept[ptr]) return;
-    if (data[ptr * 4 + 3] === 0) return;
-    kept[ptr] = 1;
-    fstack[fsp++] = x; fstack[fsp++] = y;
-  };
-  fpush(startX, startY);
-  while (fsp > 0) {
-    const y = fstack[--fsp];
-    const x = fstack[--fsp];
-    fpush(x - 1, y); fpush(x + 1, y);
-    fpush(x, y - 1); fpush(x, y + 1);
-  }
+    // Flood fill from seed through any opaque pixel.
+    const kept = new Uint8Array(srcW * srcH);
+    const fstack = new Int32Array(srcW * srcH * 2);
+    let fsp = 0;
+    const fpush = (x, y) => {
+      if (x < 0 || x >= srcW || y < 0 || y >= srcH) return;
+      const ptr = y * srcW + x;
+      if (kept[ptr]) return;
+      if (data[ptr * 4 + 3] === 0) return;
+      kept[ptr] = 1;
+      fstack[fsp++] = x; fstack[fsp++] = y;
+    };
+    fpush(startX, startY);
+    while (fsp > 0) {
+      const y = fstack[--fsp];
+      const x = fstack[--fsp];
+      fpush(x - 1, y); fpush(x + 1, y);
+      fpush(x, y - 1); fpush(x, y + 1);
+    }
 
-  // Bbox the kept component.
-  let minX = srcW, minY = srcH, maxX = -1, maxY = -1;
-  for (let py = 0; py < srcH; py++) {
-    for (let px = 0; px < srcW; px++) {
-      if (kept[py * srcW + px]) {
-        if (px < minX) minX = px;
-        if (px > maxX) maxX = px;
-        if (py < minY) minY = py;
-        if (py > maxY) maxY = py;
+    // Bbox the kept component.
+    let minX = srcW, minY = srcH, maxX = -1, maxY = -1;
+    for (let py = 0; py < srcH; py++) {
+      for (let px = 0; px < srcW; px++) {
+        if (kept[py * srcW + px]) {
+          if (px < minX) minX = px;
+          if (px > maxX) maxX = px;
+          if (py < minY) minY = py;
+          if (py > maxY) maxY = py;
+        }
       }
     }
-  }
-  if (maxX < 0) return null;
+    if (maxX < 0) return null;
 
-  const bboxW = maxX - minX + 1;
-  const bboxH = maxY - minY + 1;
+    const bboxW = maxX - minX + 1;
+    const bboxH = maxY - minY + 1;
 
-  // Sanity check: too-tiny component is probably just a stray pixel cluster.
-  if (bboxW * bboxH < 200) return null;
+    // Sanity checks:
+    //  - too-tiny component = stray pixel cluster, not a real character
+    //  - too-wide component = flood swallowed the whole source region
+    //    (which usually means chroma-key didn't break neighbor cells apart);
+    //    fall back to plain cell crop instead of producing a frame that
+    //    visually merges multiple cells.
+    if (bboxW * bboxH < 400) return null;
+    if (bboxW >= srcW * 0.95 && bboxH >= srcH * 0.95) return null;
 
-  // Build output canvas: only seed-connected pixels survive.
-  const outCanvas = document.createElement('canvas');
-  outCanvas.width = bboxW;
-  outCanvas.height = bboxH;
-  const outCtx = outCanvas.getContext('2d');
-  outCtx.imageSmoothingEnabled = false;
-  const outData = outCtx.createImageData(bboxW, bboxH);
-  const out = outData.data;
-  for (let py = 0; py < bboxH; py++) {
-    for (let px = 0; px < bboxW; px++) {
-      const sPtr = (py + minY) * srcW + (px + minX);
-      if (!kept[sPtr]) continue;
-      const sIdx = sPtr * 4;
-      const oIdx = (py * bboxW + px) * 4;
-      out[oIdx]     = data[sIdx];
-      out[oIdx + 1] = data[sIdx + 1];
-      out[oIdx + 2] = data[sIdx + 2];
-      out[oIdx + 3] = data[sIdx + 3];
+    // Build output canvas: only seed-connected pixels survive.
+    const outCanvas = document.createElement('canvas');
+    outCanvas.width = bboxW;
+    outCanvas.height = bboxH;
+    const outCtx = outCanvas.getContext('2d');
+    outCtx.imageSmoothingEnabled = false;
+    const outData = outCtx.createImageData(bboxW, bboxH);
+    const out = outData.data;
+    for (let py = 0; py < bboxH; py++) {
+      for (let px = 0; px < bboxW; px++) {
+        const sPtr = (py + minY) * srcW + (px + minX);
+        if (!kept[sPtr]) continue;
+        const sIdx = sPtr * 4;
+        const oIdx = (py * bboxW + px) * 4;
+        out[oIdx]     = data[sIdx];
+        out[oIdx + 1] = data[sIdx + 1];
+        out[oIdx + 2] = data[sIdx + 2];
+        out[oIdx + 3] = data[sIdx + 3];
+      }
     }
-  }
-  outCtx.putImageData(outData, 0, 0);
+    outCtx.putImageData(outData, 0, 0);
 
-  // Anchors:
-  //   anchorX = body's horizontal center within the bbox. The body is
-  //     centered at cell center in sheet coords = seedX in source coords =
-  //     (seedX - minX) in bbox coords. Even when the bbox extends asymmetric-
-  //     ally (e.g. punch fist extends right), the body stays at this anchor.
-  //   anchorY = body's feet within the bbox. Feet sit at the cell bottom
-  //     (cellH - 1 in source coords) = (cellH - 1 - minY) in bbox coords.
-  const anchorX = seedX - minX;
-  const anchorY = (cellH - 1) - minY + 1; // +1: feet AT bottom edge
-  return {
-    canvas: outCanvas,
-    width: bboxW,
-    height: bboxH,
-    anchorX,
-    anchorY
-  };
+    // Anchors:
+    //   anchorX = body's horizontal center within the bbox.
+    //   anchorY = body's feet within the bbox (cell bottom).
+    const anchorX = seedX - minX;
+    const anchorY = (cellH - 1) - minY + 1;
+    return {
+      canvas: outCanvas,
+      width: bboxW,
+      height: bboxH,
+      anchorX,
+      anchorY
+    };
+  } catch (err) {
+    // Any unexpected error (allocation failure, getImageData CORS, etc.)
+    // falls through to the simpleCellCrop fallback rather than nuking the
+    // entire sprite load.
+    console.warn(`[SpriteLoader] cropFrameWithSeed threw at cell(${cellX},${cellY}):`, err.message);
+    return null;
+  }
 }
 
 /**
@@ -391,26 +404,35 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
  * rendering behavior.
  */
 function simpleCellCrop(sheet, cellX, cellY, cellW, cellH) {
-  const c = document.createElement('canvas');
-  c.width = cellW;
-  c.height = cellH;
-  const cx = c.getContext('2d');
-  cx.imageSmoothingEnabled = false;
-  cx.drawImage(sheet, cellX, cellY, cellW, cellH, 0, 0, cellW, cellH);
-  const data = cx.getImageData(0, 0, cellW, cellH).data;
-  let opaque = 0;
-  const minOpaque = Math.floor(cellW * cellH * 0.03);
-  for (let i = 3; i < data.length; i += 4) {
-    if (data[i] > 0) { opaque++; if (opaque >= minOpaque) break; }
+  try {
+    const c = document.createElement('canvas');
+    c.width = cellW;
+    c.height = cellH;
+    const cx = c.getContext('2d');
+    cx.imageSmoothingEnabled = false;
+    cx.drawImage(sheet, cellX, cellY, cellW, cellH, 0, 0, cellW, cellH);
+    // Opaque check: bail only on truly-empty cells (e.g. trailing magenta
+    // cells at the end of the KO row). Bar set very low (0.5%) so any cell
+    // that has visible character art returns successfully - we'd rather
+    // render a cell with magenta bg than punt to the procedural fallback.
+    const data = cx.getImageData(0, 0, cellW, cellH).data;
+    let opaque = 0;
+    const minOpaque = Math.max(50, Math.floor(cellW * cellH * 0.005));
+    for (let i = 3; i < data.length; i += 4) {
+      if (data[i] > 0) { opaque++; if (opaque >= minOpaque) break; }
+    }
+    if (opaque < minOpaque) return null;
+    return { canvas: c, width: cellW, height: cellH, anchorX: cellW / 2, anchorY: cellH };
+  } catch (err) {
+    console.warn(`[SpriteLoader] simpleCellCrop threw at cell(${cellX},${cellY}):`, err.message);
+    return null;
   }
-  if (opaque < minOpaque) return null;
-  return { canvas: c, width: cellW, height: cellH, anchorX: cellW / 2, anchorY: cellH };
 }
 
-function sliceAnimations(sheet) {
+function sliceAnimations(processed, raw) {
   const sprites = {};
-  const cellW = Math.floor(sheet.width / GRID_COLS);
-  const cellH = Math.floor(sheet.height / GRID_ROWS);
+  const cellW = Math.floor(processed.width / GRID_COLS);
+  const cellH = Math.floor(processed.height / GRID_ROWS);
   if (FIRST_FRAME_COL <= LABEL_COL) {
     throw new Error('FIRST_FRAME_COL must be > LABEL_COL');
   }
@@ -424,11 +446,21 @@ function sliceAnimations(sheet) {
       if (col >= GRID_COLS) break;
       const cellX = col * cellW;
       const cellY = anim.rowIndex * cellH;
-      let frame = cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH);
+      // First try: seed-flood + bbox on the chroma-keyed sheet (clean
+      // transparent bg, extended limbs captured). If anything goes wrong
+      // (chroma-key was too aggressive, seed missed, bbox swallowed
+      // everything, exception thrown), fall back to a raw cell from the
+      // un-chroma-keyed sheet so we ALWAYS produce a visible sprite -
+      // worst case the cell has magenta bg visible but the character is
+      // legible. A degraded sprite beats no sprite (purple block fallback).
+      let frame = cropFrameWithSeed(processed, cellX, cellY, cellW, cellH);
       if (!frame) {
-        // Seed-flood failed - try a plain cell crop so we still get *some*
-        // sprite to render rather than punting to the procedural fallback.
-        frame = simpleCellCrop(sheet, cellX, cellY, cellW, cellH);
+        frame = simpleCellCrop(processed, cellX, cellY, cellW, cellH);
+      }
+      if (!frame && raw) {
+        // Even the processed-sheet simple crop failed - try raw sheet
+        // (will have magenta bg visible but at least Bill renders).
+        frame = simpleCellCrop(raw, cellX, cellY, cellW, cellH);
         if (frame) fallbackCount++;
       }
       frames.push(frame);
@@ -440,7 +472,7 @@ function sliceAnimations(sheet) {
       }
     }
     sprites[name] = frames;
-    const fbNote = fallbackCount > 0 ? ` (${fallbackCount} fallback)` : '';
+    const fbNote = fallbackCount > 0 ? ` (${fallbackCount} raw-fallback)` : '';
     console.log(
       `[SpriteLoader] ${name}: row ${anim.rowIndex}, ${validCount}/${frames.length} valid frames${fbNote}${dimsLog}`
     );
@@ -455,8 +487,18 @@ function loadSheet() {
     const img = new Image();
     img.onload = () => {
       try {
+        // Keep an unmodified copy of the sheet as a safety net for slicing.
+        // If the chroma-key produces unusable results for some cell, we fall
+        // back to a plain crop from this raw copy.
+        const raw = document.createElement('canvas');
+        raw.width = img.naturalWidth;
+        raw.height = img.naturalHeight;
+        const rawCtx = raw.getContext('2d');
+        rawCtx.imageSmoothingEnabled = false;
+        rawCtx.drawImage(img, 0, 0);
+
         const processed = processSheet(img);
-        const sprites = sliceAnimations(processed);
+        const sprites = sliceAnimations(processed, raw);
         resolve(sprites);
       } catch (err) {
         console.error('[SpriteLoader] BillSpriteSheet failed:', err.message);
