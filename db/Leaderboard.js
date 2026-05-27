@@ -223,14 +223,20 @@ function submitSession(rawName, deltas) {
   return {
     player: { nameLower: key, ...p },
     previousTotals: { previousTickets, previousBosses, previousCrawls },
-    leaderboard: getLeaderboard(10),
+    leaderboard: getLeaderboard(), // FULL list - the screen scrolls
     globalStats: getGlobalStats()
   };
 }
 
-function getLeaderboard(limit = 10) {
+/**
+ * Return every player in the leaderboard, sorted by lifetime tickets
+ * descending. Pass `limit` if you want a top-N slice; omit (or pass falsy)
+ * to get the full roster. Scale is small enough that we don't bother
+ * paginating - the entire list is fine to ship over the websocket.
+ */
+function getLeaderboard(limit) {
   init();
-  return Object.entries(cache.players)
+  const all = Object.entries(cache.players)
     .map(([key, p]) => ({
       nameLower: key,
       displayName: p.displayName,
@@ -238,8 +244,8 @@ function getLeaderboard(limit = 10) {
       bossesDefeated: p.bossesDefeated,
       crawlsCompleted: p.crawlsCompleted
     }))
-    .sort((a, b) => b.ticketsKilled - a.ticketsKilled)
-    .slice(0, limit);
+    .sort((a, b) => b.ticketsKilled - a.ticketsKilled);
+  return limit && limit > 0 ? all.slice(0, limit) : all;
 }
 
 /**

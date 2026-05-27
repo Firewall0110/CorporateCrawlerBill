@@ -999,8 +999,26 @@ class GameRoom {
     if (!player) return;
     const attr = instantiateAttribute(key, tier);
     if (!attr) return;
+
+    // Capture pre-pick maxHealth so we can scale CURRENT health by the
+    // exact same multiplier the attribute applied. This is the only place
+    // current health auto-scales - recomputeAllEffectiveStats() runs on
+    // join/leave too, but those callers MUST NOT also scale current
+    // health (it would double-heal). The scale fires here, exactly once
+    // per pick, so it acts as a soft heal at moment-of-selection.
+    const prevMaxHealth = player.effectiveStats.maxHealth || player.baseStats.maxHealth || 1;
+
     player.attributes.push(attr);
     this.recomputeAllEffectiveStats();
+
+    const newMaxHealth = player.effectiveStats.maxHealth || prevMaxHealth;
+    if (newMaxHealth > prevMaxHealth && player.health > 0) {
+      // Same multiplier as the maxHealth modifier. Round to nearest int and
+      // clamp to the new max in case floating-point drift overshoots.
+      const ratio = newMaxHealth / prevMaxHealth;
+      player.health = Math.min(player.maxHealth, Math.round(player.health * ratio));
+    }
+
     // Broadcast updated player state so the HUD picks up the new attribute
     this.io.to(this.id).emit('playerJoined', { player: player.getState() });
   }
