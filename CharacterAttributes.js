@@ -67,6 +67,28 @@ const TIER_BUFF_MULT = {
   celestial: 4.00   // +300% (hilariously broken)
 };
 
+// Player MOVE-speed buff. Movement at the standard +300% celestial was
+// uncontrollable - Bill skidded across the screen too fast to react to
+// boss telegraphs. Each tier's BONUS is 30% of the standard buff, with
+// celestial fixed at +100% (still strong, still landable).
+// Tier      | std bonus | move bonus  | move multiplier
+// common    | +10%      | +3%         | 1.03
+// uncommon  | +20%      | +6%         | 1.06
+// rare      | +35%      | +10.5%      | 1.105
+// epic      | +55%      | +16.5%      | 1.165
+// legendary | +80%      | +24%        | 1.24
+// mythic    | +120%     | +36%        | 1.36
+// celestial | (special) | +100%       | 2.00
+const TIER_MOVE_BUFF_MULT = {
+  common:    1.03,
+  uncommon:  1.06,
+  rare:      1.105,
+  epic:      1.165,
+  legendary: 1.24,
+  mythic:    1.36,
+  celestial: 2.00
+};
+
 // Enemy debuff (multiplicative <1). Celestial reduces to 2% of original.
 const TIER_DEBUFF_MULT = {
   common:    0.90,  // -10%
@@ -145,7 +167,7 @@ const ATTRIBUTES = {
   AGILE_DEVELOPMENT: {
     name: 'Agile Development',
     target: 'movementSpeed', appliesToTeam: 'players',
-    scale: TIER_BUFF_MULT, format: fmtBuff('move speed')
+    scale: TIER_MOVE_BUFF_MULT, format: fmtBuff('move speed')
   },
   NETWORK_SECURITY: {
     name: 'Network Security',
@@ -167,7 +189,7 @@ const ATTRIBUTES = {
   PIVOT_STRATEGY: {
     name: 'Pivot Strategy',
     target: 'movementSpeed', appliesToTeam: 'players',
-    scale: TIER_BUFF_MULT, format: fmtBuff('move speed')
+    scale: TIER_MOVE_BUFF_MULT, format: fmtBuff('move speed')
   },
   BANDWIDTH_OPTIMIZATION: {
     name: 'Bandwidth Optimization',
@@ -257,7 +279,7 @@ const ATTRIBUTES = {
   GOING_FORWARD: {
     name: 'Going Forward',
     target: 'movementSpeed', appliesToTeam: 'all',
-    scale: TIER_BUFF_MULT, format: fmtBuff('team move speed')
+    scale: TIER_MOVE_BUFF_MULT, format: fmtBuff('team move speed')
   }
 };
 

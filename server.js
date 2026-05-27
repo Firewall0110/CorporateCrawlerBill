@@ -36,13 +36,20 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/api/rooms', (req, res) => {
-  const roomList = Array.from(gameRooms.values()).map(room => ({
-    id: room.id,
-    name: room.name,
-    playerCount: room.getPlayerCount(),
-    maxPlayers: MAX_PLAYERS_PER_ROOM,
-    status: room.status
-  }));
+  // Hide rooms that have already cleared the boss ('finished' status) so
+  // new joiners can't crash a victory screen / leaderboard. The room
+  // object stays in memory until its last player disconnects (so the
+  // existing players keep getting socket events), but it's no longer
+  // advertised as joinable.
+  const roomList = Array.from(gameRooms.values())
+    .filter(room => room.status !== 'finished')
+    .map(room => ({
+      id: room.id,
+      name: room.name,
+      playerCount: room.getPlayerCount(),
+      maxPlayers: MAX_PLAYERS_PER_ROOM,
+      status: room.status
+    }));
   res.json({ rooms: roomList });
 });
 
@@ -116,6 +123,14 @@ io.on('connection', (socket) => {
 
     if (room.getPlayerCount() >= MAX_PLAYERS_PER_ROOM) {
       socket.emit('error', { message: 'Room is full' });
+      return;
+    }
+
+    // Guard against stale room IDs / direct-link joins after the boss has
+    // been defeated. The /api/rooms listing already filters these out, but
+    // a client with a cached id could still try.
+    if (room.status === 'finished') {
+      socket.emit('error', { message: 'Room already finished - start a new run' });
       return;
     }
 
