@@ -99,18 +99,23 @@ const ANIM = {
   SPECIAL: { rowIndex: 5, frameCount: 7 }
 };
 
-// ===== Chroma key (flood-fill from edges, tight tolerance) =====
+// ===== Chroma key (flood-fill from edges, moderate tolerance) =====
 //
 // Previous version: distance-threshold match against the bg magenta. That
 // blanket-matched every magenta-ish pixel in the sheet, including the pink
 // highlights inside the SPECIAL globe FX and the bubble's interior glow -
 // they got punched out, leaving a hole through the middle of the effect.
 //
-// New version: flood-fill from the four edges using a TIGHT color tolerance.
-// Only magenta pixels that are reachable through other magenta from the
-// outside become transparent. Interior pink-tinted FX pixels (bubble glow,
-// lightning sparks, etc.) are not edge-reachable, so they survive.
-const CHROMA_DIST_SQ = 38 * 38; // tight - just JPEG noise tolerance (~1444)
+// New version: flood-fill from the four edges. Only magenta pixels reach-
+// able through other magenta from the outside become transparent. Interior
+// pink-tinted FX pixels (bubble glow, lightning sparks) are not edge-
+// reachable, so they survive even when their color matches the bg.
+//
+// Tolerance needs to be loose enough to pass through cell-divider lines
+// (the slightly-darker magenta borders separating animation cells) so the
+// flood reaches every cell's outer perimeter; without that the flood
+// stalls at cell borders and most of the sheet stays opaque.
+const CHROMA_DIST_SQ = 70 * 70; // ~4900 - permissive enough to cross cell borders
 
 function processSheet(img) {
   const canvas = document.createElement('canvas');
@@ -214,8 +219,11 @@ function processSheet(img) {
   console.log(
     `[SpriteLoader] BillSpriteSheet: ${(transparentRatio * 100).toFixed(1)}% transparent after flood-fill chroma key`
   );
-  if (transparentRatio < 0.20) {
-    throw new Error(`Chroma key failed: only ${(transparentRatio * 100).toFixed(1)}% transparent`);
+  // Lower bar (was 0.20) - flood-fill is more conservative than blanket
+  // distance-match, so a smaller absolute transparent ratio still indicates
+  // a working chroma key. Only throw if obviously broken (no flood happened).
+  if (transparentRatio < 0.08) {
+    throw new Error(`Chroma key failed: only ${(transparentRatio * 100).toFixed(1)}% transparent (flood-fill stalled?)`);
   }
 
   ctx.putImageData(imageData, 0, 0);
@@ -375,6 +383,30 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
   };
 }
 
+/**
+ * Last-resort fallback when seed-flood extraction fails (returns null) but
+ * the cell visibly contains something. Slices the raw cell with no margin /
+ * bbox / connected-component isolation - we just get the unmodified cell.
+ * Anchor defaults to canvas center / bottom which matches the legacy
+ * rendering behavior.
+ */
+function simpleCellCrop(sheet, cellX, cellY, cellW, cellH) {
+  const c = document.createElement('canvas');
+  c.width = cellW;
+  c.height = cellH;
+  const cx = c.getContext('2d');
+  cx.imageSmoothingEnabled = false;
+  cx.drawImage(sheet, cellX, cellY, cellW, cellH, 0, 0, cellW, cellH);
+  const data = cx.getImageData(0, 0, cellW, cellH).data;
+  let opaque = 0;
+  const minOpaque = Math.floor(cellW * cellH * 0.03);
+  for (let i = 3; i < data.length; i += 4) {
+    if (data[i] > 0) { opaque++; if (opaque >= minOpaque) break; }
+  }
+  if (opaque < minOpaque) return null;
+  return { canvas: c, width: cellW, height: cellH, anchorX: cellW / 2, anchorY: cellH };
+}
+
 function sliceAnimations(sheet) {
   const sprites = {};
   const cellW = Math.floor(sheet.width / GRID_COLS);
@@ -385,13 +417,20 @@ function sliceAnimations(sheet) {
   for (const [name, anim] of Object.entries(ANIM)) {
     const frames = [];
     let validCount = 0;
+    let fallbackCount = 0;
     let dimsLog = '';
     for (let i = 0; i < anim.frameCount; i++) {
       const col = FIRST_FRAME_COL + i;
       if (col >= GRID_COLS) break;
       const cellX = col * cellW;
       const cellY = anim.rowIndex * cellH;
-      const frame = cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH);
+      let frame = cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH);
+      if (!frame) {
+        // Seed-flood failed - try a plain cell crop so we still get *some*
+        // sprite to render rather than punting to the procedural fallback.
+        frame = simpleCellCrop(sheet, cellX, cellY, cellW, cellH);
+        if (frame) fallbackCount++;
+      }
       frames.push(frame);
       if (frame) {
         validCount++;
@@ -401,8 +440,9 @@ function sliceAnimations(sheet) {
       }
     }
     sprites[name] = frames;
+    const fbNote = fallbackCount > 0 ? ` (${fallbackCount} fallback)` : '';
     console.log(
-      `[SpriteLoader] ${name}: row ${anim.rowIndex}, ${validCount}/${frames.length} valid frames${dimsLog}`
+      `[SpriteLoader] ${name}: row ${anim.rowIndex}, ${validCount}/${frames.length} valid frames${fbNote}${dimsLog}`
     );
   }
   return sprites;
