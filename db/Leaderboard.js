@@ -343,6 +343,24 @@ function adminAdjustPlayer(rawName, fields = {}, mode = 'set') {
 }
 
 /**
+ * ADMIN: permanently delete a player row. Used by the token-gated
+ * /api/admin/delete endpoint. Updates cache + disk. Returns
+ * { deleted: bool, displayName? }.
+ */
+function adminDeletePlayer(rawName) {
+  init();
+  const name = String(rawName || '').trim();
+  if (!name) return { deleted: false };
+  const key = name.toLowerCase();
+  const row = cache.players[key];
+  if (!row) return { deleted: false };
+  const displayName = row.displayName;
+  delete cache.players[key];
+  saveDebounced();
+  return { deleted: true, displayName };
+}
+
+/**
  * Return every player in the leaderboard, sorted by lifetime tickets
  * descending. Pass `limit` if you want a top-N slice; omit (or pass falsy)
  * to get the full roster. Scale is small enough that we don't bother
@@ -409,5 +427,6 @@ module.exports = {
   getLeaderboard,
   getGlobalStats,
   computeLuck,
-  adminAdjustPlayer
+  adminAdjustPlayer,
+  adminDeletePlayer
 };

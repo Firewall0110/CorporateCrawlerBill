@@ -47,6 +47,7 @@ const ADMIN_PAGE_HTML = `<!DOCTYPE html>
   button { padding:12px 20px; border:none; border-radius:5px; font-weight:bold; cursor:pointer; font-family:inherit; font-size:14px; }
   button.apply { background:#33ff66; color:#001; }
   button.lookup { background:#3399ff; color:#012; }
+  button.danger { background:#ff4455; color:#fff; }
   #msg { margin-top:16px; padding:10px 12px; border-radius:5px; min-height:18px; font-size:13px; }
   #msg.ok { background:rgba(51,255,102,0.15); color:#9f9; }
   #msg.err { background:rgba(255,80,80,0.18); color:#f99; }
@@ -81,6 +82,7 @@ const ADMIN_PAGE_HTML = `<!DOCTYPE html>
   <div class="btns">
     <button class="lookup" onclick="lookup()">Look up current</button>
     <button class="apply" onclick="apply()">Apply changes</button>
+    <button class="danger" onclick="del()">Delete player</button>
   </div>
   <div id="msg"></div>
 
@@ -160,6 +162,28 @@ const ADMIN_PAGE_HTML = `<!DOCTYPE html>
     } catch(e){ setMsg('Request failed: '+e.message, 'err'); }
   }
 
+  async function del() {
+    const name = $('name').value.trim();
+    if (!name) { setMsg('Enter a player name to delete.', 'err'); return; }
+    if (!$('token').value) { setMsg('Enter the admin token.', 'err'); return; }
+    if (!confirm('Permanently delete "'+name+'" from the leaderboard? This cannot be undone.')) return;
+    try {
+      const r = await fetch('/api/admin/delete', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ token: $('token').value, name: name })
+      });
+      const data = await r.json();
+      if (r.ok) {
+        setMsg('Deleted "'+data.deleted+'".', 'ok');
+        $('tickets').value=''; $('bosses').value=''; $('crawls').value='';
+        refresh();
+      } else {
+        setMsg('Error '+r.status+': '+(data.error||'unknown'), 'err');
+      }
+    } catch(e){ setMsg('Request failed: '+e.message, 'err'); }
+  }
+
   refresh();
 </script>
 </body>
@@ -225,6 +249,26 @@ app.post('/api/admin/player', (req, res) => {
   const fields = { ticketsKilled, bossesDefeated, crawlsCompleted };
   const updated = Leaderboard.adminAdjustPlayer(name, fields, mode === 'add' ? 'add' : 'set');
   res.json({ ok: true, player: updated, leaderboard: Leaderboard.getLeaderboard() });
+});
+
+// POST /api/admin/delete - permanently remove a player row.
+// Body: { token, name }
+app.post('/api/admin/delete', (req, res) => {
+  if (!ADMIN_TOKEN) {
+    return res.status(403).json({ error: 'Admin disabled. Set the ADMIN_TOKEN env var to enable.' });
+  }
+  const { token, name } = req.body || {};
+  if (token !== ADMIN_TOKEN) {
+    return res.status(401).json({ error: 'Bad admin token.' });
+  }
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Player name is required.' });
+  }
+  const result = Leaderboard.adminDeletePlayer(name);
+  if (!result.deleted) {
+    return res.status(404).json({ error: 'No player found named "' + name + '".' });
+  }
+  res.json({ ok: true, deleted: result.displayName, leaderboard: Leaderboard.getLeaderboard() });
 });
 
 // GET /admin - self-contained admin page (must be registered BEFORE the
