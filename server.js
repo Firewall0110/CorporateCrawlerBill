@@ -35,6 +35,18 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// Read-only leaderboard endpoint. Useful for verifying persistence after
+// a Railway redeploy: hit this URL, compare counts to what you saw before
+// the push. Also handy for any future external dashboard. Query ?limit=N
+// to trim the list.
+app.get('/api/leaderboard', (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 0;
+  res.json({
+    leaderboard: Leaderboard.getLeaderboard(limit),
+    globalStats: Leaderboard.getGlobalStats()
+  });
+});
+
 app.get('/api/rooms', (req, res) => {
   // Hide rooms that have already cleared the boss ('finished' status) so
   // new joiners can't crash a victory screen / leaderboard. The room

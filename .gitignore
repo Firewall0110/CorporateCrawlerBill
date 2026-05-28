@@ -15,3 +15,4 @@ yarn-error.log*
 # Railway this should live on a mounted Volume so it survives redeploys.
 data/leaderboard.json
 data/leaderboard.json.tmp
+data/leaderboard.json.backup

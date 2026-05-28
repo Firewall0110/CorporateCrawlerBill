@@ -34,6 +34,15 @@ const path = require('path');
 const DB_PATH = process.env.LEADERBOARD_PATH ||
   path.join(__dirname, '..', 'data', 'leaderboard.json');
 
+// .backup file lives next to the main DB - written AFTER every successful
+// save so it's always one-write-behind. Recovery: if the main file is lost
+// or corrupt, point LEADERBOARD_PATH at the .backup or copy it manually.
+const BACKUP_PATH = DB_PATH + '.backup';
+
+// Schema version - bump when we change the cache shape. migrate() handles
+// upgrades on load. Starting at v1 (initial published structure).
+const SCHEMA_VERSION = 1;
+
 // ===== Seeds (idempotent - only insert if name doesn't already exist) =====
 // Numbers per user spec.
 const SEEDS = [
@@ -49,40 +58,98 @@ const SEEDS = [
 
 // ===== In-memory cache + persistence =====
 // cache.players is keyed by lowercased name (the case-insensitive lookup key).
-let cache = { players: {} };
+let cache = { schema: SCHEMA_VERSION, players: {} };
 let saveTimer = null;
 let initialized = false;
+
+/**
+ * Migrate a loaded cache up to SCHEMA_VERSION. Called once on startup.
+ * Each version bump adds a new `if (version < N)` block below; current
+ * structure is v1 so this is a no-op for now.
+ */
+function migrate(parsed) {
+  const incoming = parsed.schema || 0;
+  if (incoming < 1) {
+    // v0 -> v1: ensure top-level `players` exists. Nothing else changed.
+    if (!parsed.players) parsed.players = {};
+  }
+  // Future migrations go here, e.g.:
+  // if (incoming < 2) { /* rename field, backfill default, etc. */ }
+  parsed.schema = SCHEMA_VERSION;
+  return parsed;
+}
 
 function ensureDirSync() {
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 }
 
 function loadFromDisk() {
+  // Loud, deploy-visible logging: this is where you verify the volume
+  // mount worked after a Railway redeploy.
+  console.log(`[Leaderboard] Storage path: ${DB_PATH}`);
+  console.log(`[Leaderboard] Backup path:  ${BACKUP_PATH}`);
+
+  const tryParse = (filePath) => {
+    if (!fs.existsSync(filePath)) return null;
+    try {
+      const raw = fs.readFileSync(filePath, 'utf8');
+      return JSON.parse(raw);
+    } catch (err) {
+      console.error(`[Leaderboard] Could not parse ${filePath}:`, err.message);
+      return null;
+    }
+  };
+
   try {
     ensureDirSync();
-    if (fs.existsSync(DB_PATH)) {
-      const raw = fs.readFileSync(DB_PATH, 'utf8');
-      const parsed = JSON.parse(raw);
-      cache = { players: parsed.players || {} };
-      console.log(`[Leaderboard] Loaded ${Object.keys(cache.players).length} players from ${DB_PATH}`);
+    // Try main first. If main is missing/corrupt, fall back to backup
+    // before giving up and seeding fresh - this is the recovery path.
+    let parsed = tryParse(DB_PATH);
+    let source = DB_PATH;
+    if (!parsed) {
+      const fallback = tryParse(BACKUP_PATH);
+      if (fallback) {
+        console.warn(`[Leaderboard] Main file unreadable, recovered from backup`);
+        parsed = fallback;
+        source = BACKUP_PATH;
+      }
+    }
+    if (parsed) {
+      cache = migrate(parsed);
+      console.log(`[Leaderboard] Loaded ${Object.keys(cache.players).length} players (schema v${cache.schema}) from ${source}`);
     } else {
-      console.log(`[Leaderboard] No existing file at ${DB_PATH}; starting fresh`);
+      console.log(`[Leaderboard] No existing file - will seed and create fresh at ${DB_PATH}`);
     }
   } catch (err) {
     console.error('[Leaderboard] Failed to load, starting fresh:', err.message);
-    cache = { players: {} };
+    cache = { schema: SCHEMA_VERSION, players: {} };
   }
 }
 
 /**
- * Atomic write: serialize to a .tmp file, then rename over the real file.
- * If the process dies mid-write, the real file is unchanged.
+ * Atomic write with rolling backup:
+ *   1. Write the new state to a .tmp file.
+ *   2. Copy the current main file (if any) to .backup - so the backup is
+ *      always one-write-behind, never half-written.
+ *   3. Rename .tmp to main - atomic on POSIX filesystems.
+ *
+ * If the process dies anywhere in this sequence, recovery on next startup
+ * is: try main (valid because rename is atomic), else try .backup (valid
+ * because it was the previously-saved main).
  */
 function saveImmediate() {
   try {
     ensureDirSync();
     const tmp = DB_PATH + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(cache, null, 2), 'utf8');
+    if (fs.existsSync(DB_PATH)) {
+      try {
+        fs.copyFileSync(DB_PATH, BACKUP_PATH);
+      } catch (backupErr) {
+        // Backup failure shouldn't block the main save - log and continue.
+        console.warn('[Leaderboard] Backup copy failed (continuing):', backupErr.message);
+      }
+    }
     fs.renameSync(tmp, DB_PATH);
   } catch (err) {
     console.error('[Leaderboard] Save failed:', err.message);
