@@ -747,18 +747,24 @@ class GameRoom {
       let hitAny = false;
 
       allEnemies.forEach(target => {
-        const distance = Math.abs(attacker.x - target.x);
-        const verticalDistance = Math.abs(attacker.y - target.y);
+        const dx = attacker.x - target.x;
+        const dy = attacker.y - target.y;
 
-        // Check if target is in range
-        if (distance < attacker.effectiveStats.attackRange && verticalDistance < 50) {
+        let inRange;
+        if (attacker.attackType === 'special') {
+          // Special uses a RADIAL "bubble" hitbox (matches the on-screen
+          // explosion radius) instead of the rectangular range + thin
+          // vertical band that punch/kick use. attackRadius=240 -> roughly
+          // 2x the old reach, so the special clears a big circle around Bill.
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          inRange = dist < (attacker.attackRadius || 240);
+        } else {
+          inRange = Math.abs(dx) < attacker.effectiveStats.attackRange && Math.abs(dy) < 50;
+        }
+
+        if (inRange) {
           this.applyDamage(attacker, target);
           hitAny = true;
-
-          // For kicks and specials, check radius for multi-hit
-          if (attacker.attackType === 'kick' || attacker.attackType === 'special') {
-            // Already hit, can hit others in radius
-          }
         }
       });
 
@@ -793,12 +799,16 @@ class GameRoom {
     let damage = attacker.effectiveStats.attack;
     let knockbackForce = 5;
 
-    // Apply attack type multipliers (matching Unit.performAttack mechanics)
+    // Apply attack type multipliers (matching Unit.performAttack mechanics).
+    // These are the AUTHORITATIVE damage multipliers - performAttack's
+    // attackPower is display-only. Special is x7.5 (the intended "3x bump"
+    // from the old x2.5; the previous edit only touched performAttack so it
+    // never actually applied - fixed here).
     if (attacker.attackType === 'kick') {
       damage *= 1.5;
       knockbackForce = 8;
     } else if (attacker.attackType === 'special') {
-      damage *= 2.5;
+      damage *= 7.5;
       knockbackForce = 12;
     }
 

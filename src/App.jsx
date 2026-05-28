@@ -21,34 +21,70 @@ const COOLDOWN_MS = { punch: 300, kick: 600, special: 5000 };
 //   pain tint that fades out over the remainder.
 const HIT_FLASH_DURATION_MS = 350;
 const HIT_FLASH_IMPACT_MS = 80;
+// Stun stars persist LONGER than the hit flash (700ms vs 350ms) so the
+// "you got stunned" cue is clearly readable, not a 1/3-second blip. The
+// stars fade out over the back half of this window.
+const STUN_STARS_DURATION_MS = 700;
 
 /**
- * Draw three small yellow "+" stars orbiting above the head as a classic
- * 16-bit stun indicator. `t` is the time since the hit in seconds (used to
- * spin the orbit so it reads as motion, not a static decoration).
+ * Draw one filled 4-point sparkle star centered at (x,y) with the given
+ * outer radius and alpha. Yellow with a warm glow so it pops against the
+ * darker stage backdrops.
+ */
+function drawSparkleStar(ctx, x, y, r, alpha) {
+  const inner = r * 0.4;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = `rgba(255, 238, 40, ${alpha})`;
+  ctx.shadowColor = `rgba(255, 170, 0, ${alpha})`;
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  for (let k = 0; k < 8; k++) {
+    const ang = (k / 8) * Math.PI * 2 - Math.PI / 2;
+    const rad = (k % 2 === 0) ? r : inner;
+    const px = Math.cos(ang) * rad;
+    const py = Math.sin(ang) * rad;
+    if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  // tiny white hot center for extra pop
+  ctx.fillStyle = `rgba(255, 255, 255, ${alpha * 0.9})`;
+  ctx.beginPath();
+  ctx.arc(0, 0, r * 0.22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Orbiting stun-star cloud above the head - classic 16-bit "you got hit"
+ * indicator. Four chunky sparkle stars circling in a wide ellipse, fading
+ * out over the back half of STUN_STARS_DURATION_MS. Much more prominent
+ * than the old tiny "+" version (which was easy to miss in combat).
  */
 function drawStunStars(ctx, cx, headY, sinceHitMs) {
-  const NUM_STARS = 3;
-  const RX = 18;          // horizontal orbit radius (wide ellipse over head)
-  const RY = 6;           // vertical orbit radius (flatter)
-  const STAR = 5;         // size of the "+" arms in pixels
-  const rotPerSec = 2.5;  // orbit rotations per second
+  if (sinceHitMs >= STUN_STARS_DURATION_MS) return;
+  // Fade: full alpha for the first half, ramp to 0 over the second half.
+  const lifeT = sinceHitMs / STUN_STARS_DURATION_MS; // 0 -> 1
+  const alpha = lifeT < 0.5 ? 1 : Math.max(0, 1 - (lifeT - 0.5) / 0.5);
+
+  const NUM_STARS = 4;
+  const RX = 28;          // horizontal orbit radius (wide ellipse over head)
+  const RY = 10;          // vertical orbit radius (flatter)
+  const STAR_R = 7;       // outer radius of each sparkle
+  const rotPerSec = 2.2;  // orbit rotations per second
   const t = sinceHitMs / 1000;
   const baseAngle = t * Math.PI * 2 * rotPerSec;
 
-  ctx.save();
-  ctx.fillStyle = '#ffee00';
-  ctx.shadowColor = '#000';
-  ctx.shadowBlur = 2;
   for (let i = 0; i < NUM_STARS; i++) {
     const a = baseAngle + (i * Math.PI * 2 / NUM_STARS);
-    const sx = Math.round(cx + Math.cos(a) * RX);
-    const sy = Math.round(headY + Math.sin(a) * RY);
-    // Simple "+" star
-    ctx.fillRect(sx - STAR / 2, sy - 1, STAR, 2);
-    ctx.fillRect(sx - 1, sy - STAR / 2, 2, STAR);
+    const sx = cx + Math.cos(a) * RX;
+    const sy = headY + Math.sin(a) * RY;
+    // Stars near the "back" of the ellipse (sin(a) < 0) drawn slightly
+    // smaller for a faux-depth orbit feel.
+    const depthScale = 0.8 + 0.2 * ((Math.sin(a) + 1) / 2);
+    drawSparkleStar(ctx, sx, sy, STAR_R * depthScale, alpha);
   }
-  ctx.restore();
 }
 
 /**
@@ -2378,9 +2414,10 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 
   ctx.restore();
 
-  // Stun stars above head (players only - matches Bill sprite path)
-  if (hitFlash && unit.team === 'players') {
-    drawStunStars(ctx, cx, screenY + 4, sinceHit);
+  // Stun stars above head (players only). Uses the longer STUN_STARS window
+  // (not hitFlash) so the cue lingers ~700ms instead of 350ms.
+  if (unit.team === 'players' && sinceHit < STUN_STARS_DURATION_MS) {
+    drawStunStars(ctx, cx, screenY - 8, sinceHit);
   }
 
   // === ATTACK EFFECTS (in world space, not rotated) ===
@@ -2591,9 +2628,11 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   // Only for players - mooks getting punched don't need stars, their white
   // flash already sells the impact (and the attackCooldown reset stuns them
   // mechanically on the server side, which reads visually as a stagger).
-  if (hitFlash && unit.team === 'players') {
+  // Uses the longer STUN_STARS window (~700ms) rather than hitFlash (350ms)
+  // so the cue is clearly visible, not a brief blip.
+  if (unit.team === 'players' && sinceHit < STUN_STARS_DURATION_MS) {
     // bbox-tight sprites start AT the head; push stars above the head top
-    const headY = drawY - 6;
+    const headY = drawY - 12;
     drawStunStars(ctx, cx, headY, sinceHit);
   }
 
@@ -2644,44 +2683,83 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   }
 }
 
+// Visual radius of the special FX. Matches the server's special attackRadius
+// (Unit.js -> 240) so the damage bubble OVERLAPS the actual kill zone: what
+// you see caught inside the bubble is what takes the hit.
+const SPECIAL_FX_RADIUS = 240;
+
 /**
- * Special-ability detonation FX. Renders on top of the sprite art so the
- * special move reads as a big "BOOM" regardless of what the sprite frame
- * happens to be showing. Five overlapping layers:
- *   1. White-hot radial core that flashes then fades
- *   2. Three concentric magenta shockwave rings expanding outward at
- *      staggered phases so there's always one ring in motion
- *   3. Eight jagged lightning bolts radiating from the center, with
- *      time-jittered segments so they look alive
- *   4. Twelve yellow sparkles flying outward on the leading edge
- *   5. A semi-transparent magenta "damage bubble" that grows and pops
+ * Special-ability detonation FX. Renders on top of the sprite so the special
+ * reads as a big "BOOM" regardless of the current sprite frame. The damage
+ * bubble is now the CENTERPIECE and grows to the full kill radius so the
+ * player can see exactly what's inside the blast.
+ *
+ * Layers (drawn back-to-front):
+ *   1. Big translucent "damage bubble" energy sphere -> full hit radius
+ *   2. Bright animated bubble rim (the kill-zone boundary)
+ *   3. White-hot core flash
+ *   4. Three expanding shockwave rings
+ *   5. Twelve jagged lightning bolts reaching toward the rim
+ *   6. Sparkles riding the leading edge
+ *   7. Orbiting energy motes inside the bubble
  */
 function drawSpecialExplosion(ctx, cx, cy, progress, opacity, now) {
   ctx.save();
-  const MAX_R = 150;
-  // ease-out cubic so the explosion bursts fast then settles
+  const MAX_R = SPECIAL_FX_RADIUS;
+  // ease-out cubic so the blast bursts fast then settles
   const easeOut = 1 - Math.pow(1 - progress, 3);
 
-  // ---- 1. White-hot core flash (largest at start, shrinks as it fades) ----
-  const coreR = 36 * (1 - progress * 0.4);
+  // ---- 1+2. DAMAGE BUBBLE (centerpiece) - grows from 35% to 100% of the
+  // kill radius so the boundary clearly shows what's getting hit. ----
+  const bubbleR = MAX_R * (0.35 + easeOut * 0.65);
+  const bubbleAlpha = opacity * 0.5;
+  const bubGrad = ctx.createRadialGradient(cx, cy, bubbleR * 0.25, cx, cy, bubbleR);
+  bubGrad.addColorStop(0,    `rgba(255, 140, 255, ${bubbleAlpha * 0.12})`);
+  bubGrad.addColorStop(0.55, `rgba(210, 40, 255, ${bubbleAlpha * 0.32})`);
+  bubGrad.addColorStop(0.86, `rgba(255, 90, 255, ${bubbleAlpha * 0.6})`);
+  bubGrad.addColorStop(1,    `rgba(255, 215, 255, ${bubbleAlpha})`);
+  ctx.fillStyle = bubGrad;
+  ctx.shadowBlur = 0;
+  ctx.beginPath();
+  ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Bright animated rim = the kill-zone boundary. Double-stroke (glow + core).
+  ctx.strokeStyle = `rgba(255, 120, 255, ${opacity * 0.85})`;
+  ctx.lineWidth = 6;
+  ctx.shadowColor = '#ff66ff';
+  ctx.shadowBlur = 24;
+  ctx.beginPath();
+  ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.strokeStyle = `rgba(255, 240, 255, ${opacity})`;
+  ctx.lineWidth = 2;
+  ctx.shadowBlur = 10;
+  ctx.beginPath();
+  ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+  ctx.stroke();
+
+  // ---- 3. White-hot core flash ----
+  const coreR = 50 * (1 - progress * 0.4);
   const coreGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.2);
   coreGrad.addColorStop(0,    `rgba(255, 255, 255, ${opacity})`);
   coreGrad.addColorStop(0.25, `rgba(255, 220, 255, ${opacity * 0.85})`);
   coreGrad.addColorStop(0.6,  `rgba(255, 80,  255, ${opacity * 0.45})`);
   coreGrad.addColorStop(1,    'rgba(255, 0, 255, 0)');
   ctx.fillStyle = coreGrad;
+  ctx.shadowBlur = 0;
   ctx.beginPath();
   ctx.arc(cx, cy, coreR * 2.2, 0, Math.PI * 2);
   ctx.fill();
 
-  // ---- 2. Three expanding shockwave rings ----
+  // ---- 4. Three expanding shockwave rings (scaled to MAX_R) ----
   for (let i = 0; i < 3; i++) {
     const ringPhase = (progress + i * 0.33) % 1;
     const ringR = MAX_R * ringPhase;
-    const ringAlpha = (1 - ringPhase) * opacity * 0.85;
+    const ringAlpha = (1 - ringPhase) * opacity * 0.8;
     if (ringAlpha <= 0.01) continue;
     ctx.strokeStyle = `rgba(255, 0, 255, ${ringAlpha})`;
-    ctx.lineWidth = 3 + (1 - ringPhase) * 4;
+    ctx.lineWidth = 4 + (1 - ringPhase) * 5;
     ctx.shadowColor = '#ff00ff';
     ctx.shadowBlur = 16;
     ctx.beginPath();
@@ -2689,77 +2767,62 @@ function drawSpecialExplosion(ctx, cx, cy, progress, opacity, now) {
     ctx.stroke();
   }
 
-  // ---- 3. Eight jagged lightning bolts radiating outward ----
-  const NUM_BOLTS = 8;
-  const boltLen = 70 + easeOut * 50;
-  const baseSpin = progress * Math.PI * 0.5; // slow rotation while firing
+  // ---- 5. Twelve jagged lightning bolts reaching toward the rim ----
+  const NUM_BOLTS = 12;
+  const boltLen = bubbleR * 0.95; // reach almost to the bubble edge
+  const baseSpin = progress * Math.PI * 0.5;
   for (let i = 0; i < NUM_BOLTS; i++) {
     const angle = (i / NUM_BOLTS) * Math.PI * 2 + baseSpin;
-    const startR = 22;
+    const startR = 30;
     const sx = cx + Math.cos(angle) * startR;
     const sy = cy + Math.sin(angle) * startR;
 
-    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.95})`;
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.9})`;
+    ctx.lineWidth = 2.5;
     ctx.shadowColor = '#ff00ff';
     ctx.shadowBlur = 10;
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-
-    // Build jagged path with perpendicular jitter that animates
-    const segs = 5;
+    const segs = 6;
     const perpX = -Math.sin(angle);
     const perpY = Math.cos(angle);
     for (let s = 1; s <= segs; s++) {
       const t = s / segs;
       const baseX = sx + Math.cos(angle) * boltLen * t;
       const baseY = sy + Math.sin(angle) * boltLen * t;
-      // jitter shrinks as we approach the tip, and animates over time
-      const jitterAmt = 9 * (1 - t * 0.7) * Math.sin(now / 25 + i * 1.7 + s * 2.3);
+      const jitterAmt = 14 * (1 - t * 0.7) * Math.sin(now / 25 + i * 1.7 + s * 2.3);
       ctx.lineTo(baseX + perpX * jitterAmt, baseY + perpY * jitterAmt);
     }
     ctx.stroke();
   }
 
-  // ---- 4. Twelve yellow sparkles on the leading edge of the blast ----
-  const NUM_SPARKS = 12;
+  // ---- 6. Sparkles riding the leading edge of the blast ----
+  const NUM_SPARKS = 18;
   for (let i = 0; i < NUM_SPARKS; i++) {
     const angle = (i / NUM_SPARKS) * Math.PI * 2 + progress * 0.8;
-    // sparks drift outward over the duration, with a per-spark wobble
-    const r = MAX_R * easeOut * (0.65 + Math.sin(i * 4.1) * 0.3);
+    const r = MAX_R * easeOut * (0.7 + Math.sin(i * 4.1) * 0.28);
     const sx = cx + Math.cos(angle) * r;
     const sy = cy + Math.sin(angle) * r;
-    const size = 2.5 + (1 - progress) * 2.5;
+    const size = 3 + (1 - progress) * 3;
     ctx.fillStyle = `rgba(255, 240, 100, ${opacity})`;
     ctx.shadowColor = '#ffff00';
-    ctx.shadowBlur = 7;
+    ctx.shadowBlur = 8;
     ctx.fillRect(sx - size / 2, sy - size / 2, size, size);
   }
 
-  // ---- 5. "Damage bubble" - the user explicitly asked for one. A growing
-  // semi-transparent magenta sphere that wraps the character mid-blast then
-  // pops on the way out. Sits BELOW the rings/bolts visually because we
-  // draw it last with a lower z-conceptually (just composite-wise it's
-  // on top, but at low alpha it reads as a bubble enclosure). ----
-  const bubbleR = 30 + easeOut * 70;
-  const bubbleAlpha = opacity * (1 - progress * 0.6) * 0.35;
-  if (bubbleAlpha > 0.01) {
-    const bubGrad = ctx.createRadialGradient(cx, cy, bubbleR * 0.5, cx, cy, bubbleR);
-    bubGrad.addColorStop(0, 'rgba(255, 100, 255, 0)');
-    bubGrad.addColorStop(0.7, `rgba(255, 0, 255, ${bubbleAlpha * 0.4})`);
-    bubGrad.addColorStop(1, `rgba(255, 200, 255, ${bubbleAlpha})`);
-    ctx.fillStyle = bubGrad;
-    ctx.shadowBlur = 0;
+  // ---- 7. Orbiting energy motes INSIDE the bubble for extra life ----
+  const NUM_MOTES = 8;
+  for (let i = 0; i < NUM_MOTES; i++) {
+    const orbitR = bubbleR * (0.4 + 0.4 * ((i % 3) / 2));
+    const a = -progress * Math.PI * 3 + (i / NUM_MOTES) * Math.PI * 2;
+    const mx = cx + Math.cos(a) * orbitR;
+    const my = cy + Math.sin(a) * orbitR * 0.6; // squashed for depth
+    ctx.fillStyle = `rgba(255, 200, 255, ${opacity * 0.8})`;
+    ctx.shadowColor = '#ff88ff';
+    ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
+    ctx.arc(mx, my, 2.5, 0, Math.PI * 2);
     ctx.fill();
-
-    // Bubble rim highlight
-    ctx.strokeStyle = `rgba(255, 220, 255, ${bubbleAlpha * 1.8})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(cx, cy, bubbleR, 0, Math.PI * 2);
-    ctx.stroke();
   }
 
   ctx.restore();

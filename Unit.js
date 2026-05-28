@@ -277,10 +277,18 @@ class Unit {
         // Damage multiplier bumped from x2.5 -> x7.5 (3x stronger). Special
         // is gated by a 5s cooldown so the cumulative DPS stays in check,
         // but each cast now feels like a real "screen-clear" ultimate.
+        // NOTE: actual combat damage is computed in GameRoom.applyDamage
+        // (which has its own per-type multipliers) - this attackPower is
+        // kept in sync for any display/debug use.
         this.attackPower = Math.round(this.effectiveStats.attack * 7.5);
         this.attackDuration = 500; // Long, dramatic animation
         this.attackCooldown = 5; // Fixed 5 second cooldown (overrides attackSpeed scaling)
-        this.attackRadius = 120; // Huge radius - clears area
+        // Bubble hit radius ~2x the old 120 -> 240. GameRoom.checkCombat
+        // uses this as a RADIAL distance check for the special (not the
+        // rectangular range/vertical-band used by punch/kick), and the
+        // client's drawSpecialExplosion matches it so the visual bubble
+        // overlaps the actual kill zone.
+        this.attackRadius = 240;
         break;
     }
 
