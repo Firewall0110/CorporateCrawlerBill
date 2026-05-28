@@ -296,6 +296,53 @@ function submitSession(rawName, deltas) {
 }
 
 /**
+ * ADMIN: directly adjust a player's lifetime stats. Used by the protected
+ * /api/admin/player endpoint (token-gated in server.js). Goes through the
+ * cache + saveDebounced so the change is reflected immediately in-memory
+ * AND written to disk - no server restart needed (unlike hand-editing the
+ * JSON file, which the running server would ignore until reload).
+ *
+ *   fields = { ticketsKilled?, bossesDefeated?, crawlsCompleted? }
+ *   mode   = 'set' (absolute) | 'add' (delta, may be negative)
+ *
+ * Missing/blank fields are left untouched. Values floor at 0. Creates the
+ * row if the name is new. Returns the updated row.
+ */
+function adminAdjustPlayer(rawName, fields = {}, mode = 'set') {
+  init();
+  const name = String(rawName || '').trim();
+  if (!name) return null;
+  const key = name.toLowerCase();
+  const now = new Date().toISOString();
+
+  if (!cache.players[key]) {
+    cache.players[key] = {
+      displayName: name,
+      ticketsKilled: 0,
+      bossesDefeated: 0,
+      crawlsCompleted: 0,
+      firstPlayed: now,
+      lastPlayed: now
+    };
+  }
+  const p = cache.players[key];
+  p.displayName = name; // refresh capitalization
+
+  const apply = (current, val) => {
+    if (val === undefined || val === null || val === '' || isNaN(Number(val))) return current;
+    const n = Number(val);
+    return Math.max(0, Math.round(mode === 'add' ? current + n : n));
+  };
+  p.ticketsKilled   = apply(p.ticketsKilled,   fields.ticketsKilled);
+  p.bossesDefeated  = apply(p.bossesDefeated,  fields.bossesDefeated);
+  p.crawlsCompleted = apply(p.crawlsCompleted, fields.crawlsCompleted);
+  p.lastPlayed = now;
+
+  saveDebounced();
+  return { nameLower: key, ...p };
+}
+
+/**
  * Return every player in the leaderboard, sorted by lifetime tickets
  * descending. Pass `limit` if you want a top-N slice; omit (or pass falsy)
  * to get the full roster. Scale is small enough that we don't bother
@@ -361,5 +408,6 @@ module.exports = {
   submitSession,
   getLeaderboard,
   getGlobalStats,
-  computeLuck
+  computeLuck,
+  adminAdjustPlayer
 };
