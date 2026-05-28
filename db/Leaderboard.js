@@ -346,6 +346,16 @@ function computeLuck(ticketsKilled) {
   return Math.min(99, Math.max(0, Math.floor(ticketsKilled / 10)));
 }
 
+// EAGER INIT at module load. Previously init() was lazy (deferred to the
+// first user action) so the [Leaderboard] startup logs only printed when
+// somebody actually created/joined a room. That made it hard to verify a
+// Railway Volume mount worked - if no player happened to click "create
+// room" before the container got rolling-deployed away, no logs appeared.
+// Running init() here means the storage-path + load-source logs print
+// IMMEDIATELY at server start, every deploy. Visible in the Railway deploy
+// log so you can tell at a glance whether the volume is wired up right.
+init();
+
 module.exports = {
   getOrCreatePlayer,
   submitSession,
