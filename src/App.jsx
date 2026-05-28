@@ -2454,7 +2454,8 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
     ctx.translate(-cx, -feetY);
   }
 
-  // Attacking: small forward lunge
+  // Attacking: small forward lunge toward the target (still uses `facing`
+  // so the lunge goes the right way even though we don't mirror the sprite).
   let lunge = 0;
   if (unit.isAttacking) {
     const elapsed = now - (unit.attackStartTime || now);
@@ -2463,24 +2464,21 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
     lunge = facing * Math.sin(t * Math.PI) * 6;
   }
 
-  // Flip for left-facing (tickets are drawn facing right)
-  if (facing < 0) {
-    ctx.translate(drawX + drawW + lunge, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(sprite.canvas, 0, drawY, drawW, drawH);
-  } else {
-    ctx.drawImage(sprite.canvas, drawX + lunge, drawY, drawW, drawH);
-  }
+  // NO horizontal mirror for ticket monsters. Unlike Bill (a side-profile
+  // humanoid who must flip to show facing), these tickets are FRONT-FACING
+  // symmetric creatures - they look at the camera with a centered face and
+  // a header label. Mirroring them gave no directional benefit and flipped
+  // the baked-in header text backwards, making labels unreadable whenever a
+  // mook walked left (which is most of the time). Drawing them always in
+  // their native (un-flipped) orientation keeps the label legible and the
+  // decorative body icons consistent, with zero loss of "facing" cues.
+  ctx.drawImage(sprite.canvas, drawX + lunge, drawY, drawW, drawH);
 
   // Hit flash overlay (white tint on the sprite)
   if (hitFlash) {
     ctx.globalCompositeOperation = 'source-atop';
     ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-    if (facing < 0) {
-      ctx.fillRect(0, drawY, drawW, drawH);
-    } else {
-      ctx.fillRect(drawX + lunge, drawY, drawW, drawH);
-    }
+    ctx.fillRect(drawX + lunge, drawY, drawW, drawH);
     ctx.globalCompositeOperation = 'source-over';
   }
 
