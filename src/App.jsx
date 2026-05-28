@@ -1073,6 +1073,11 @@ const BeatEmUpGame = () => {
   const canvasRef = useRef(null);
   const keysPressed = useRef({});
   const animationFrameRef = useRef(null);
+  // Mirror of gameState in a ref so the input setInterval (which is keyed
+  // off [socket, screen, roomId] and does NOT re-create on every state
+  // update) can read the latest effectiveStats.attackSpeed for cooldown
+  // scaling without going stale.
+  const gameStateRef = useRef(null);
 
   // Visual effects refs (mutable, don't trigger re-renders)
   const damageNumbersRef = useRef([]); // {id, x, y, value, color, spawnTime, vy}
@@ -1398,6 +1403,23 @@ const BeatEmUpGame = () => {
 
       // Attack inputs - respect client-side cooldowns and record for visual feedback
       const nowMs = Date.now();
+      // The server scales punch/kick cooldown by effectiveStats.attackSpeed:
+      //   actualSeconds = (0.5 / attackSpeed) * (0.6 for punch | 1.2 for kick)
+      // Baseline player attackSpeed=1.2 -> 250 ms punch / 500 ms kick.
+      // COOLDOWN_MS was hardcoded at 300/600/5000 which roughly matched the
+      // BASELINE; that meant any attack-speed buff visually did nothing
+      // because the UI button stayed grey for the baseline duration.
+      // Mirror the server formula here so the cooldown sweep reflects the
+      // actual server cooldown. Special is fixed at 5s on the server too,
+      // so it doesn't scale.
+      const me = gameStateRef.current?.players?.find?.(p => p.id === playerId);
+      const playerAttackSpeed = me?.effectiveStats?.attackSpeed || 1.2;
+      const speedRatio = playerAttackSpeed / 1.2; // 1.0 = baseline
+      const scaledCooldown = {
+        punch:   COOLDOWN_MS.punch   / speedRatio,
+        kick:    COOLDOWN_MS.kick    / speedRatio,
+        special: COOLDOWN_MS.special // unscaled - server fixes at 5s
+      };
       const tryAttack = (key, attackType) => {
         if (!keysPressed.current[key]) return;
         const cd = cooldownsRef.current[attackType];
@@ -1410,7 +1432,7 @@ const BeatEmUpGame = () => {
         keysPressed.current[key] = false;
         cooldownsRef.current[attackType] = {
           start: nowMs,
-          end: nowMs + COOLDOWN_MS[attackType]
+          end: nowMs + scaledCooldown[attackType]
         };
       };
       tryAttack('j', 'punch');
@@ -1419,7 +1441,13 @@ const BeatEmUpGame = () => {
     }, 16);
 
     return () => clearInterval(inputInterval);
-  }, [socket, screen, roomId]);
+  }, [socket, screen, roomId, playerId]);
+
+  // Keep gameStateRef in sync with gameState so the input setInterval can
+  // read the latest effectiveStats.attackSpeed without going stale.
+  useEffect(() => {
+    gameStateRef.current = gameState;
+  }, [gameState]);
 
   // Update camera position
   useEffect(() => {

@@ -141,7 +141,11 @@ const ATTRIBUTES = {
   // --- Original 8 (re-expressed in new tier system) ---
   EFFECTIVE_COMMUNICATOR: {
     name: 'Effective Communicator',
-    target: 'attack', appliesToTeam: 'all',
+    // 'players' not 'all' - "team" in the description means the PLAYER team.
+    // 'all' was silently buffing mook attack too, which at celestial gave
+    // enemies +300% damage (4x harder hits). Same anti-buff bug across all
+    // six previously-'all' attributes - all fixed in this commit.
+    target: 'attack', appliesToTeam: 'players',
     scale: TIER_BUFF_MULT, format: fmtBuff('team attack')
   },
   CRYSTAL_CLARITY_IV: {
@@ -151,7 +155,7 @@ const ATTRIBUTES = {
   },
   HARD_DRIVE: {
     name: 'Hard Drive',
-    target: 'attackSpeed', appliesToTeam: 'all',
+    target: 'attackSpeed', appliesToTeam: 'players',
     scale: TIER_BUFF_MULT, format: fmtBuff('team attack speed')
   },
   SYSTEMATIC_THINKER: {
@@ -183,7 +187,7 @@ const ATTRIBUTES = {
   // --- 20 NEW corporate-jargon attributes ---
   SYNERGIZE: {
     name: 'Synergize',
-    target: 'attack', appliesToTeam: 'all',
+    target: 'attack', appliesToTeam: 'players',
     scale: TIER_BUFF_MULT, format: fmtBuff('team attack')
   },
   PIVOT_STRATEGY: {
@@ -238,7 +242,7 @@ const ATTRIBUTES = {
   },
   TOUCH_BASE: {
     name: 'Touch Base',
-    target: 'attackSpeed', appliesToTeam: 'all',
+    target: 'attackSpeed', appliesToTeam: 'players',
     scale: TIER_BUFF_MULT, format: fmtBuff('team attack speed')
   },
   QUARTERLY_EARNINGS: {
@@ -273,12 +277,12 @@ const ATTRIBUTES = {
   },
   STAKEHOLDER_BUY_IN: {
     name: 'Stakeholder Buy-In',
-    target: 'attackSpeed', appliesToTeam: 'all',
+    target: 'attackSpeed', appliesToTeam: 'players',
     scale: TIER_BUFF_MULT, format: fmtBuff('team attack speed')
   },
   GOING_FORWARD: {
     name: 'Going Forward',
-    target: 'movementSpeed', appliesToTeam: 'all',
+    target: 'movementSpeed', appliesToTeam: 'players',
     scale: TIER_MOVE_BUFF_MULT, format: fmtBuff('team move speed')
   }
 };

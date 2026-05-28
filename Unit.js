@@ -174,7 +174,12 @@ class Unit {
       team: this.team,
       velocityX: this.velocityX, // For walking animation
       lastHitTime: this.lastHitTime, // For hit flash effect
-      attackType: this.attackType // For attack visual differentiation
+      attackType: this.attackType, // For attack visual differentiation
+      // Effective stats: the client needs attackSpeed to render the right
+      // cooldown sweep on the action buttons (otherwise attack-speed buffs
+      // appear cosmetic - the UI button stays grey for the baseline duration
+      // even though the server is allowing the next attack much sooner).
+      effectiveStats: this.effectiveStats
     };
   }
 
@@ -269,7 +274,10 @@ class Unit {
       case 'special':
         // Area clear - big AoE attack with fixed 5s cooldown
         this.attackRange = 150;
-        this.attackPower = Math.round(this.effectiveStats.attack * 2.5);
+        // Damage multiplier bumped from x2.5 -> x7.5 (3x stronger). Special
+        // is gated by a 5s cooldown so the cumulative DPS stays in check,
+        // but each cast now feels like a real "screen-clear" ultimate.
+        this.attackPower = Math.round(this.effectiveStats.attack * 7.5);
         this.attackDuration = 500; // Long, dramatic animation
         this.attackCooldown = 5; // Fixed 5 second cooldown (overrides attackSpeed scaling)
         this.attackRadius = 120; // Huge radius - clears area
