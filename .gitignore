@@ -16,3 +16,10 @@ yarn-error.log*
 data/leaderboard.json
 data/leaderboard.json.tmp
 data/leaderboard.json.backup
+
+# Build-at-deploy: the React client is rebuilt from src/ at deploy time via
+# railway.json's buildCommand ("npm run build"). We no longer commit build/
+# because a committed artifact silently drifts from src/ and gets served stale
+# (this caused the attribute-picker/sprite regression). src/ + public/ are the
+# single source of truth. To preview a production bundle locally: npm run build.
+build/
