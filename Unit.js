@@ -80,9 +80,17 @@ class Unit {
       // Each mod is already a modifier object: { target, value, appliesToTeam }
       if (!mod || !mod.target) return;
 
-      // Check if modifier applies to this unit
+      // Check if modifier applies to this unit.
+      //   'all'                 -> every unit
+      //   'players' / 'enemies' -> matches the unit's team
+      //   'boss'                -> only the boss. A boss keeps team 'enemies'
+      //                            so generic enemy debuffs still hit it, but
+      //                            'boss'-targeted modifiers (e.g. Minimum
+      //                            Viable Product) skip the regular mooks.
       const appliesTo = mod.appliesToTeam || 'all';
-      if (appliesTo !== 'all' && appliesTo !== this.team) {
+      if (appliesTo === 'boss') {
+        if (!this.isBoss) return; // Only the boss; mooks/players are unaffected.
+      } else if (appliesTo !== 'all' && appliesTo !== this.team) {
         return; // Skip if doesn't apply to this team
       }
 
