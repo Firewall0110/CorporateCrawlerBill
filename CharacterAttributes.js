@@ -89,6 +89,29 @@ const TIER_MOVE_BUFF_MULT = {
   celestial: 2.00
 };
 
+// Boss-only max-HP debuff. The PER-TIER MAGNITUDE mirrors TIER_MOVE_BUFF_MULT
+// (the toned-down move-speed curve) but applied as a REDUCTION: a tier that
+// grants +X% move speed instead strips X% off the boss's max health. The lone
+// exception is celestial - move speed's +100% would map to -100% (a boss with
+// zero HP, i.e. an instant kill), so the boss reduction is capped at -90%.
+// Tier      | move bonus | boss HP reduction | boss HP multiplier
+// common    | +3%        | -3%               | 0.97
+// uncommon  | +6%        | -6%               | 0.94
+// rare      | +10.5%     | -10.5%            | 0.895
+// epic      | +16.5%     | -16.5%            | 0.835
+// legendary | +24%       | -24%              | 0.76
+// mythic    | +36%       | -36%              | 0.64
+// celestial | +100%      | -90% (capped)     | 0.10
+const TIER_BOSS_HEALTH_DEBUFF = {
+  common:    0.97,
+  uncommon:  0.94,
+  rare:      0.895,
+  epic:      0.835,
+  legendary: 0.76,
+  mythic:    0.64,
+  celestial: 0.10
+};
+
 // Enemy debuff (multiplicative <1). Celestial reduces to 2% of original.
 const TIER_DEBUFF_MULT = {
   common:    0.90,  // -10%
@@ -284,6 +307,13 @@ const ATTRIBUTES = {
     name: 'Going Forward',
     target: 'movementSpeed', appliesToTeam: 'players',
     scale: TIER_MOVE_BUFF_MULT, format: fmtBuff('team move speed')
+  },
+  MINIMUM_VIABLE_PRODUCT: {
+    name: 'Minimum Viable Product',
+    // Boss-only: ships the boss as a stripped-down MVP with a fraction of its
+    // health. appliesToTeam 'boss' so it never touches the regular mooks.
+    target: 'maxHealth', appliesToTeam: 'boss',
+    scale: TIER_BOSS_HEALTH_DEBUFF, format: fmtDebuff('boss max health')
   }
 };
 

@@ -62,6 +62,11 @@ class GameRoom {
     this.bossDeathStartTime = null; // set when boss first dies
     this.BOSS_DEATH_DURATION = 5200; // ms - matches 64 frames @ ~12fps
 
+    // Boss base max-health before per-player scaling and attribute modifiers.
+    // Single source of truth for spawnBoss() and rescaleBossHealth(), which
+    // previously disagreed (420 vs a stale 300).
+    this.BOSS_BASE_HEALTH = 420;
+
     // Track which sections have already been spawned (prevents respawn on backtracking)
     // Key format: "zoneIndex-sectionIndex"
     this.spawnedSections = new Set();
@@ -679,12 +684,13 @@ class GameRoom {
     const bossSection = zone.sections[0];
     const centerX = (bossSection.xRange.start + bossSection.xRange.end) / 2;
 
-    // Boss stats scale with player count (0.25x per player)
+    // Boss base health scales with player count (+25% per extra player) via
+    // computeBossBaseHealth. Attribute modifiers (e.g. Minimum Viable Product)
+    // are layered on top by recomputeEffectiveStats below.
     const playerCount = this.players.size;
-    const healthMultiplier = 1 + (playerCount - 1) * 0.25;
 
     const bossStats = {
-      maxHealth: Math.round(420 * healthMultiplier), // bumped: 300 -> 420
+      maxHealth: this.computeBossBaseHealth(playerCount),
       attack: 160,           // 5x bump: 32 -> 160 (boss melee threatens 4-5 shot KO)
       attackSpeed: 1.0,
       armor: 25,             // bumped: 20 -> 25
@@ -1077,38 +1083,51 @@ class GameRoom {
       enemy.recomputeEffectiveStats(this.activeModifiers);
     });
 
-    // Recompute boss if exists
+    // Recompute boss if exists. rescaleBossHealth() re-derives the boss's
+    // base health for the current player count AND re-applies the active
+    // modifiers, so we don't call recomputeEffectiveStats separately here.
     if (this.boss) {
-      this.boss.recomputeEffectiveStats(this.activeModifiers);
-
-      // Also rescale boss health based on current player count
       this.rescaleBossHealth();
     }
   }
 
   /**
-   * Rescale boss health based on current player count
+   * Boss base max-health for the current player count, BEFORE attribute
+   * modifiers. 1x for solo, +25% per additional player. Single source of
+   * truth shared by spawnBoss() and rescaleBossHealth().
+   */
+  computeBossBaseHealth(playerCount = this.players.size) {
+    const mult = 1 + (Math.max(1, playerCount) - 1) * 0.25;
+    return Math.round(this.BOSS_BASE_HEALTH * mult);
+  }
+
+  /**
+   * Rescale boss health for the current player count and re-apply attribute
+   * modifiers (e.g. Minimum Viable Product's boss-health debuff), preserving
+   * the boss's current health as a fraction of its max.
    */
   rescaleBossHealth() {
     if (!this.boss) return;
 
-    const playerCount = this.players.size;
-    const healthMultiplier = 1 + (playerCount - 1) * 0.25;
-    const newMaxHealth = Math.round(300 * healthMultiplier);
+    // Preserve the boss's current health as a fraction of its max so a
+    // mid-fight player join/leave (or attribute pick) doesn't heal/gut it.
+    const healthRatio = this.boss.maxHealth > 0
+      ? this.boss.health / this.boss.maxHealth
+      : 1;
 
-    // Adjust current health proportionally to the new max health
-    if (this.boss.maxHealth > 0) {
-      const healthRatio = this.boss.health / this.boss.maxHealth;
-      this.boss.maxHealth = newMaxHealth;
-      this.boss.effectiveStats.maxHealth = newMaxHealth;
-      this.boss.health = Math.round(newMaxHealth * healthRatio);
-    } else {
-      this.boss.maxHealth = newMaxHealth;
-      this.boss.effectiveStats.maxHealth = newMaxHealth;
-      this.boss.health = newMaxHealth;
-    }
+    // Re-scale the BASE health for the current player count, then let
+    // recomputeEffectiveStats layer the active modifiers on top. The old code
+    // wrote effectiveStats.maxHealth directly off a stale 300 base, which
+    // silently discarded every maxHealth modifier (boss-health debuffs never
+    // actually applied).
+    this.boss.baseStats.maxHealth = this.computeBossBaseHealth();
+    this.boss.recomputeEffectiveStats(this.activeModifiers);
 
-    debugLog(`[Boss] Rescaled health to ${Math.round(this.boss.health)}/${newMaxHealth} (${playerCount} players)`);
+    // recomputeEffectiveStats set boss.maxHealth = effective max; restore the
+    // pre-rescale health ratio against that new max.
+    this.boss.health = Math.round(this.boss.maxHealth * healthRatio);
+
+    debugLog(`[Boss] Rescaled health to ${Math.round(this.boss.health)}/${this.boss.maxHealth} (${this.players.size} players)`);
   }
 
   /**
