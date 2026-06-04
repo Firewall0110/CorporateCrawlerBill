@@ -1,0 +1,32 @@
+name: CI
+
+# Safety net before changes auto-deploy. Railway auto-deploys main and rebuilds
+# the client from source at deploy time (no build/ is committed), so a bundle
+# that fails to build would otherwise only be caught in production. This runs
+# the same build on every PR into main and blocks merge if it breaks.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify server modules load
+        run: node -e "require('./GameRoom'); require('./CharacterAttributes'); require('./Unit'); require('./Boss'); require('./Player'); require('./Enemy'); console.log('server modules OK')"
+
+      # GitHub Actions sets CI=true, so react-scripts build treats lint
+      # warnings as errors - a stricter gate than a local build.
+      - name: Build client
+        run: npm run build
