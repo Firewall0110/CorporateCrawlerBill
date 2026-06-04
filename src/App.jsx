@@ -2257,6 +2257,48 @@ const BeatEmUpGame = () => {
  * Draw a unit with 16-bit style sprite anatomy, animations, and effects
  * For players (team='players'), uses pre-loaded Bill sprite sheets when available
  */
+/**
+ * Little name tag above a crawler so co-op players can tell each other apart
+ * once a room fills up. The local player's tag is cyan with an outline (a
+ * find-yourself cue); everyone else is white. A translucent pill keeps the
+ * text legible over the busy photoreal backdrops.
+ *   bottomY = the y the tag's bottom edge sits at (just above the health bar).
+ */
+function drawCrawlerNameTag(ctx, name, cx, bottomY, isMe) {
+  const label = (name && String(name).trim()) || 'CRAWLER';
+  const text = label.length > 12 ? label.slice(0, 11) + '…' : label;
+  ctx.save();
+  ctx.font = '8px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'alphabetic';
+  const tagW = ctx.measureText(text).width + 10;
+  const tagH = 13;
+  const tagX = cx - tagW / 2;
+  const tagY = bottomY - tagH;
+
+  // Translucent pill background (rounded if supported, else a plain rect)
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+  if (ctx.roundRect) {
+    ctx.beginPath();
+    ctx.roundRect(tagX, tagY, tagW, tagH, 3);
+    ctx.fill();
+  } else {
+    ctx.fillRect(tagX, tagY, tagW, tagH);
+  }
+
+  // Cyan outline marks the local player's tag
+  if (isMe) {
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 1;
+    if (ctx.roundRect) ctx.stroke();
+    else ctx.strokeRect(tagX, tagY, tagW, tagH);
+  }
+
+  ctx.fillStyle = isMe ? '#00ffff' : '#ffffff';
+  ctx.fillText(text, cx, tagY + tagH - 4);
+  ctx.restore();
+}
+
 function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   if (!unit) return;
 
@@ -2442,15 +2484,9 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
     ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
   }
 
-  // === NAME (only for player) ===
-  if (isMe) {
-    ctx.fillStyle = '#00ffff';
-    ctx.font = '9px "Press Start 2P", monospace';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = '#000000';
-    ctx.shadowBlur = 4;
-    ctx.fillText('YOU', cx, screenY - 18);
-    ctx.shadowBlur = 0;
+  // === NAME TAG (all players, so co-op players can tell each other apart) ===
+  if (unit.team === 'players') {
+    drawCrawlerNameTag(ctx, unit.name, cx, screenY - 14, isMe);
   }
 
   // === K.O. INDICATOR ===
@@ -2660,16 +2696,9 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
     ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
   }
 
-  // "YOU" label for own character
-  if (isMe) {
-    ctx.fillStyle = '#00ffff';
-    ctx.font = '9px "Press Start 2P", monospace';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = '#000000';
-    ctx.shadowBlur = 4;
-    ctx.fillText('YOU', cx, drawY - 14);
-    ctx.shadowBlur = 0;
-  }
+  // Crawler name tag above every player (cyan + outline for the local player)
+  // so it's easy to tell which crawler is which once a room fills up.
+  drawCrawlerNameTag(ctx, unit.name, cx, drawY - 10, isMe);
 
   // K.O. indicator
   if (unit.isKnockedOut) {
