@@ -2299,6 +2299,46 @@ function drawCrawlerNameTag(ctx, name, cx, bottomY, isMe) {
   ctx.restore();
 }
 
+// Reusable offscreen buffer for silhouette-masked sprite tinting (hit flash).
+// We can't tint a sprite by filling its rect with `source-atop` on the MAIN
+// canvas: the stage is drawn opaque into that same canvas, so the mask covers
+// the whole rectangle and you get a hard white BOX instead of a tinted
+// character. Compositing on this offscreen buffer works because the area around
+// the sprite there is genuinely transparent, so `source-atop` masks to the
+// sprite's silhouette. We then blit the tinted result back to the main canvas.
+let _tintScratch = null;
+function getTintScratch(w, h) {
+  if (!_tintScratch) _tintScratch = document.createElement('canvas');
+  const cw = Math.max(1, Math.ceil(w));
+  const ch = Math.max(1, Math.ceil(h));
+  // Grow-only: resizing clears the canvas, so avoid it when already big enough.
+  if (_tintScratch.width < cw) _tintScratch.width = cw;
+  if (_tintScratch.height < ch) _tintScratch.height = ch;
+  return _tintScratch;
+}
+
+// Draw `srcCanvas` into `ctx` at (dx,dy,dw,dh). When `tint` (a CSS color) is
+// given, the tint is applied only to the sprite's non-transparent pixels, so
+// the hit flash reads as a tinted character rather than a box. Honors whatever
+// transform (mirror/rotation) is already on `ctx`, since the final blit goes
+// through `ctx.drawImage`.
+function drawSpriteTinted(ctx, srcCanvas, dx, dy, dw, dh, tint) {
+  if (!tint) {
+    ctx.drawImage(srcCanvas, dx, dy, dw, dh);
+    return;
+  }
+  const scratch = getTintScratch(dw, dh);
+  const sctx = scratch.getContext('2d');
+  sctx.clearRect(0, 0, scratch.width, scratch.height);
+  sctx.drawImage(srcCanvas, 0, 0, dw, dh);
+  sctx.globalCompositeOperation = 'source-atop';
+  sctx.fillStyle = tint;
+  sctx.fillRect(0, 0, dw, dh);
+  sctx.globalCompositeOperation = 'source-over';
+  // Blit just the used sub-rect (scratch may be larger from a prior bigger draw).
+  ctx.drawImage(scratch, 0, 0, Math.ceil(dw), Math.ceil(dh), dx, dy, dw, dh);
+}
+
 function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   if (!unit) return;
 
@@ -2360,73 +2400,84 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   // Skip drawing body if knocked out (fall over animation)
   const koTilt = unit.isKnockedOut ? Math.PI / 2 : 0;
 
-  ctx.save();
-  ctx.translate(cx, screenY + h / 2 + bobAmount);
-  ctx.rotate(koTilt * facing);
+  // Render the procedural body into the offscreen buffer (origin at body
+  // center) so the hit-flash tint can be masked to its silhouette - same reason
+  // as the sprite path, since tinting on the opaque main canvas yields a white
+  // box. The buffer is padded to hold limbs that extend past the torso (attack
+  // arm / kick leg) plus the local-player glow.
+  const PAD_X = 40, PAD_Y = 36;
+  const bufW = w + PAD_X * 2;
+  const bufH = h + PAD_Y * 2;
+  const ox = bufW / 2, oy = bufH / 2;   // body center within the buffer
+  const scratch = getTintScratch(bufW, bufH);
+  const g = scratch.getContext('2d');
+  g.clearRect(0, 0, scratch.width, scratch.height);
+  g.save();
+  g.translate(ox, oy);
 
   // Player glow effect
   if (isMe && !unit.isKnockedOut) {
-    ctx.shadowColor = unit.color || '#00ffff';
-    ctx.shadowBlur = 15;
+    g.shadowColor = unit.color || '#00ffff';
+    g.shadowBlur = 15;
   }
 
   // === BODY (torso) ===
   const bodyColor = unit.color || '#888888';
-  ctx.fillStyle = bodyColor;
-  ctx.fillRect(-w / 2, -h / 4, w, h / 2);
+  g.fillStyle = bodyColor;
+  g.fillRect(-w / 2, -h / 4, w, h / 2);
 
   // Body outline for definition
-  ctx.strokeStyle = darkenColor(bodyColor, 0.6);
-  ctx.lineWidth = 1;
-  ctx.strokeRect(-w / 2, -h / 4, w, h / 2);
+  g.strokeStyle = darkenColor(bodyColor, 0.6);
+  g.lineWidth = 1;
+  g.strokeRect(-w / 2, -h / 4, w, h / 2);
 
   // === HEAD ===
   const headSize = w * 0.75;
-  ctx.fillStyle = lightenColor(bodyColor, 0.2);
-  ctx.fillRect(-headSize / 2, -h / 2, headSize, h / 4);
-  ctx.strokeRect(-headSize / 2, -h / 2, headSize, h / 4);
+  g.fillStyle = lightenColor(bodyColor, 0.2);
+  g.fillRect(-headSize / 2, -h / 2, headSize, h / 4);
+  g.strokeRect(-headSize / 2, -h / 2, headSize, h / 4);
 
   // === EYES ===
-  ctx.fillStyle = '#ffffff';
+  g.fillStyle = '#ffffff';
   const eyeY = -h / 2 + 5;
   const eyeSpacing = 8;
   if (facing > 0) {
-    ctx.fillRect(-eyeSpacing / 2 - 3, eyeY, 4, 4);
-    ctx.fillRect(eyeSpacing / 2 - 1, eyeY, 4, 4);
+    g.fillRect(-eyeSpacing / 2 - 3, eyeY, 4, 4);
+    g.fillRect(eyeSpacing / 2 - 1, eyeY, 4, 4);
     // Pupils
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(-eyeSpacing / 2 - 1, eyeY + 1, 2, 2);
-    ctx.fillRect(eyeSpacing / 2 + 1, eyeY + 1, 2, 2);
+    g.fillStyle = '#000000';
+    g.fillRect(-eyeSpacing / 2 - 1, eyeY + 1, 2, 2);
+    g.fillRect(eyeSpacing / 2 + 1, eyeY + 1, 2, 2);
   } else {
-    ctx.fillRect(-eyeSpacing / 2 - 3, eyeY, 4, 4);
-    ctx.fillRect(eyeSpacing / 2 - 1, eyeY, 4, 4);
-    ctx.fillStyle = '#000000';
-    ctx.fillRect(-eyeSpacing / 2 - 3, eyeY + 1, 2, 2);
-    ctx.fillRect(eyeSpacing / 2 - 1, eyeY + 1, 2, 2);
+    g.fillRect(-eyeSpacing / 2 - 3, eyeY, 4, 4);
+    g.fillRect(eyeSpacing / 2 - 1, eyeY, 4, 4);
+    g.fillStyle = '#000000';
+    g.fillRect(-eyeSpacing / 2 - 3, eyeY + 1, 2, 2);
+    g.fillRect(eyeSpacing / 2 - 1, eyeY + 1, 2, 2);
   }
 
   // === ARMS ===
   const armColor = darkenColor(bodyColor, 0.85);
-  ctx.fillStyle = armColor;
+  g.fillStyle = armColor;
   const armSwing = isMoving ? Math.sin(now / 80) * 4 : 0;
 
   // If attacking, position arm forward
   if (unit.isAttacking) {
     // Punching/attacking arm extends forward
     const armLength = unit.attackType === 'kick' ? 0 : (unit.attackType === 'special' ? 16 : 12);
-    ctx.fillRect(facing > 0 ? w / 2 : -w / 2 - armLength,
+    g.fillRect(facing > 0 ? w / 2 : -w / 2 - armLength,
       -h / 6, armLength, h / 6);
     // Back arm
-    ctx.fillRect(facing > 0 ? -w / 2 - 4 : w / 2, -h / 6 + 2, 4, h / 6);
+    g.fillRect(facing > 0 ? -w / 2 - 4 : w / 2, -h / 6 + 2, 4, h / 6);
   } else {
     // Idle/walking arms
-    ctx.fillRect(-w / 2 - 4, -h / 6 + armSwing, 4, h / 6);
-    ctx.fillRect(w / 2, -h / 6 - armSwing, 4, h / 6);
+    g.fillRect(-w / 2 - 4, -h / 6 + armSwing, 4, h / 6);
+    g.fillRect(w / 2, -h / 6 - armSwing, 4, h / 6);
   }
 
   // === LEGS ===
   const legColor = darkenColor(bodyColor, 0.7);
-  ctx.fillStyle = legColor;
+  g.fillStyle = legColor;
   const legW = w * 0.35;
   const legH = h * 0.25;
   const legSwing = isMoving ? Math.sin(now / 80) * 3 : 0;
@@ -2434,26 +2485,33 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   // If kicking, extend leg forward
   if (unit.isAttacking && unit.attackType === 'kick') {
     const kickLength = 20;
-    ctx.fillRect(facing > 0 ? w / 2 - 2 : -w / 2 - kickLength + 2,
+    g.fillRect(facing > 0 ? w / 2 - 2 : -w / 2 - kickLength + 2,
       h / 4 + 5, kickLength, legH * 0.6);
-    ctx.fillRect(-legW / 2, h / 4, legW, legH);
+    g.fillRect(-legW / 2, h / 4, legW, legH);
   } else {
-    ctx.fillRect(-w / 2 + 2, h / 4 - legSwing, legW, legH + legSwing);
-    ctx.fillRect(w / 2 - legW - 2, h / 4 + legSwing, legW, legH - legSwing);
+    g.fillRect(-w / 2 + 2, h / 4 - legSwing, legW, legH + legSwing);
+    g.fillRect(w / 2 - legW - 2, h / 4 + legSwing, legW, legH - legSwing);
   }
 
-  ctx.shadowBlur = 0;
+  g.shadowBlur = 0;
+  g.restore();
 
-  // === HIT FLASH (two-phase: white impact pop -> red pain tint) ===
+  // === HIT FLASH (two-phase: white impact pop -> red pain tint), masked to
+  // the body silhouette via source-atop on the (transparent-around-body) buffer.
   if (hitFlash) {
-    if (sinceHit < HIT_FLASH_IMPACT_MS) {
-      ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-    } else {
-      ctx.fillStyle = `rgba(255, 60, 60, ${flashAlpha * 0.65})`;
-    }
-    ctx.fillRect(-w / 2 - 5, -h / 2 - 2, w + 10, h + 5);
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = sinceHit < HIT_FLASH_IMPACT_MS
+      ? `rgba(255, 255, 255, ${flashAlpha})`
+      : `rgba(255, 60, 60, ${flashAlpha * 0.65})`;
+    g.fillRect(0, 0, bufW, bufH);
+    g.globalCompositeOperation = 'source-over';
   }
 
+  // Blit the body into the world at the unit's position, honoring the KO tilt.
+  ctx.save();
+  ctx.translate(cx, screenY + h / 2 + bobAmount);
+  ctx.rotate(koTilt * facing);
+  ctx.drawImage(scratch, 0, 0, Math.ceil(bufW), Math.ceil(bufH), -ox, -oy, bufW, bufH);
   ctx.restore();
 
   // Stun stars above head (players only). Uses the longer STUN_STARS window
@@ -2545,15 +2603,10 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
   // mook walked left (which is most of the time). Drawing them always in
   // their native (un-flipped) orientation keeps the label legible and the
   // decorative body icons consistent, with zero loss of "facing" cues.
-  ctx.drawImage(sprite.canvas, drawX + lunge, drawY, drawW, drawH);
-
-  // Hit flash overlay (white tint on the sprite)
-  if (hitFlash) {
-    ctx.globalCompositeOperation = 'source-atop';
-    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-    ctx.fillRect(drawX + lunge, drawY, drawW, drawH);
-    ctx.globalCompositeOperation = 'source-over';
-  }
+  // Hit flash: white tint masked to the sprite silhouette (not a box). See
+  // drawSpriteTinted for why the tint can't be done directly on the main canvas.
+  const tint = hitFlash ? `rgba(255, 255, 255, ${flashAlpha})` : null;
+  drawSpriteTinted(ctx, sprite.canvas, drawX + lunge, drawY, drawW, drawH, tint);
 
   ctx.restore();
 
@@ -2626,37 +2679,29 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   // Note: the "defeated" row already shows fall animation, so no extra tilt
   // for knocked-out characters - just play through the row's frames
 
+  // Hit flash - two-phase: bright white "POP" for the first 80ms, then a red
+  // "pain" tint that fades over the rest of the stun window. The red tint makes
+  // the stun period readable - white-on-skin alone was too subtle to register
+  // that Bill is briefly stunned/recoiling. The tint is masked to Bill's
+  // silhouette (see drawSpriteTinted) so it reads as a flash on the character,
+  // not a white box.
+  let tint = null;
+  if (hitFlash) {
+    tint = sinceHit < HIT_FLASH_IMPACT_MS
+      ? `rgba(255, 255, 255, ${flashAlpha})`          // impact: bright white pop
+      : `rgba(255, 60, 60, ${flashAlpha * 0.65})`;    // pain tint: warm red
+  }
+
   // Apply horizontal flip if frame says so
   if (shouldMirror) {
     ctx.translate(drawX + drawW, 0);
     ctx.scale(-1, 1);
-    ctx.drawImage(sprite.canvas, 0, drawY, drawW, drawH);
+    drawSpriteTinted(ctx, sprite.canvas, 0, drawY, drawW, drawH, tint);
   } else {
-    ctx.drawImage(sprite.canvas, drawX, drawY, drawW, drawH);
+    drawSpriteTinted(ctx, sprite.canvas, drawX, drawY, drawW, drawH, tint);
   }
 
   ctx.shadowBlur = 0;
-
-  // Hit flash overlay - two-phase: bright white "POP" for the first 80ms,
-  // then a red "pain" tint that fades over the rest of the stun window.
-  // The red tint makes the stun period readable - white-on-skin alone was
-  // too subtle to register that Bill is briefly stunned/recoiling.
-  if (hitFlash) {
-    ctx.globalCompositeOperation = 'source-atop';
-    if (sinceHit < HIT_FLASH_IMPACT_MS) {
-      // Impact: bright white pop, full alpha
-      ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
-    } else {
-      // Pain tint: warm red, ~60% strength so character still reads
-      ctx.fillStyle = `rgba(255, 60, 60, ${flashAlpha * 0.65})`;
-    }
-    if (shouldMirror) {
-      ctx.fillRect(0, drawY, drawW, drawH);
-    } else {
-      ctx.fillRect(drawX, drawY, drawW, drawH);
-    }
-    ctx.globalCompositeOperation = 'source-over';
-  }
 
   ctx.restore();
 
