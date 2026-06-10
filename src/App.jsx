@@ -1662,6 +1662,10 @@ const BeatEmUpGame = () => {
   // (so newly-created rooms appear without manual REFRESH clicks)
   useEffect(() => {
     if (screen !== 'lobby') return;
+    // Fetch immediately on entering the lobby (don't wait 3s for the first
+    // interval tick) so the active-room list is populated right away regardless
+    // of how the lobby was reached.
+    fetchRooms();
     const interval = setInterval(() => {
       fetchRooms();
     }, 3000);

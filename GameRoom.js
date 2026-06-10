@@ -993,8 +993,14 @@ class GameRoom {
    */
   offerAttributeChoices(socketId, reason = 'stage-start') {
     const player = this.players.get(socketId);
-    const luck = player?.luck || 0;
+    if (!player) return;
+    const luck = player.luck || 0;
     const choices = rollAttributeChoices(3, luck);
+    // Cache the exact (key,tier) pairs we offered so applyAttributeSelection can
+    // verify the client only picks something it was actually offered - otherwise
+    // a client can emit selectAttribute with any key/tier (e.g. an endless
+    // stream of celestial buffs) and farm the leaderboard.
+    player.pendingAttributeChoices = choices.map((c) => ({ key: c.key, tier: c.tier }));
     this.io.to(socketId).emit('attributeChoicesOffered', {
       choices,
       reason,
@@ -1013,8 +1019,18 @@ class GameRoom {
   applyAttributeSelection(socketId, key, tier) {
     const player = this.players.get(socketId);
     if (!player) return;
+
+    // Accept only a pick that matches a currently-pending offer, then consume
+    // it so the same offer can't be replayed for repeated stacking.
+    const pending = player.pendingAttributeChoices;
+    if (!Array.isArray(pending) || !pending.some((c) => c.key === key && c.tier === tier)) {
+      return;
+    }
+
     const attr = instantiateAttribute(key, tier);
     if (!attr) return;
+
+    player.pendingAttributeChoices = null;
 
     // Capture pre-pick maxHealth so we can scale CURRENT health by the
     // exact same multiplier the attribute applied. This is the only place
@@ -1158,7 +1174,9 @@ class GameRoom {
    */
   respawnPlayer(socketId) {
     const player = this.players.get(socketId);
-    if (player) {
+    // Only a knocked-out player may respawn. Without this guard `playerContinue`
+    // is a free, on-demand full heal any client can spam mid-fight.
+    if (player && player.isKnockedOut) {
       // Reset player stats
       player.health = player.maxHealth;
       player.isKnockedOut = false;

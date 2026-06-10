@@ -25,6 +25,11 @@ app.use(express.static(buildPath));
 // Store active game rooms
 const gameRooms = new Map();
 const MAX_PLAYERS_PER_ROOM = 8;
+// DoS guards: cap total concurrent rooms and how many a single socket can
+// spin up (each room runs its own 60Hz simulation + broadcast loop).
+const MAX_ROOMS = 100;
+const MAX_ROOMS_PER_SOCKET = 4;
+const MAX_NAME_LEN = 24;
 
 // Self-contained admin page (served at GET /admin). Plain HTML+JS, no build
 // step. All mutations POST to /api/admin/player with the admin token, which
@@ -292,9 +297,14 @@ app.get(/^(?!\/api\/).*/, (req, res) => {
  * read we do per session - we don't refresh mid-game.
  */
 function resolvePlayerLuck(playerData) {
-  const name = (playerData && playerData.name) ? String(playerData.name).trim() : '';
+  // Clamp the name once, here, so both the in-game Player and the persistent
+  // leaderboard row use the same bounded string (prevents unbounded names from
+  // becoming permanent leaderboard rows / oversized broadcasts).
+  const name = (playerData && playerData.name)
+    ? String(playerData.name).trim().slice(0, MAX_NAME_LEN)
+    : '';
   if (!name) {
-    return { ...playerData, luck: 0, lifetimeTickets: 0, isNewPlayer: true };
+    return { ...playerData, name, luck: 0, lifetimeTickets: 0, isNewPlayer: true };
   }
   try {
     const row = Leaderboard.getOrCreatePlayer(name);
@@ -302,13 +312,14 @@ function resolvePlayerLuck(playerData) {
     console.log(`[Leaderboard] ${name} (lifetime tickets=${row.ticketsKilled}, luck=${luck}${row.isNew ? ', NEW' : ''})`);
     return {
       ...playerData,
+      name,
       luck,
       lifetimeTickets: row.ticketsKilled,
       isNewPlayer: !!row.isNew
     };
   } catch (err) {
     console.error('[Leaderboard] lookup failed for', name, '-', err.message);
-    return { ...playerData, luck: 0, lifetimeTickets: 0, isNewPlayer: false };
+    return { ...playerData, name, luck: 0, lifetimeTickets: 0, isNewPlayer: false };
   }
 }
 
@@ -316,8 +327,31 @@ function resolvePlayerLuck(playerData) {
 io.on('connection', (socket) => {
   console.log(`Player connected: ${socket.id}`);
 
+  // Wrap every handler: coerce a missing payload to {} (so destructuring can't
+  // throw) and catch any exception. Socket.IO does NOT catch handler errors, so
+  // without this a single malformed packet would crash the whole Node process
+  // and take down every room.
+  const on = (event, handler) => {
+    socket.on(event, (payload) => {
+      try {
+        handler(payload && typeof payload === 'object' ? payload : {});
+      } catch (err) {
+        console.error(`[socket] handler '${event}' failed for ${socket.id}:`, err.message);
+      }
+    });
+  };
+
   // Create a new game room
-  socket.on('createRoom', ({ roomName, playerData }) => {
+  on('createRoom', ({ roomName, playerData }) => {
+    if (gameRooms.size >= MAX_ROOMS) {
+      socket.emit('error', { message: 'Server is at capacity - try again shortly' });
+      return;
+    }
+    if (roomsForSocket(socket.id) >= MAX_ROOMS_PER_SOCKET) {
+      socket.emit('error', { message: 'Too many open rooms for this connection' });
+      return;
+    }
+
     const roomId = generateRoomId();
     const room = new GameRoom(roomId, roomName, io);
     gameRooms.set(roomId, room);
@@ -338,7 +372,7 @@ io.on('connection', (socket) => {
   });
 
   // Join an existing room
-  socket.on('joinRoom', ({ roomId, playerData }) => {
+  on('joinRoom', ({ roomId, playerData }) => {
     const room = gameRooms.get(roomId);
 
     if (!room) {
@@ -375,7 +409,8 @@ io.on('connection', (socket) => {
   });
 
   // Handle player input
-  socket.on('playerInput', ({ roomId, input }) => {
+  on('playerInput', ({ roomId, input }) => {
+    if (!input || typeof input !== 'object') return;
     const room = gameRooms.get(roomId);
     if (room) {
       room.handlePlayerInput(socket.id, input);
@@ -383,7 +418,7 @@ io.on('connection', (socket) => {
   });
 
   // Handle player attack
-  socket.on('playerAttack', ({ roomId, attackType }) => {
+  on('playerAttack', ({ roomId, attackType }) => {
     const room = gameRooms.get(roomId);
     if (room) {
       room.handlePlayerAttack(socket.id, attackType);
@@ -391,7 +426,7 @@ io.on('connection', (socket) => {
   });
 
   // Handle player respawn (continue after game over)
-  socket.on('playerContinue', ({ roomId }) => {
+  on('playerContinue', ({ roomId }) => {
     const room = gameRooms.get(roomId);
     if (room) {
       room.respawnPlayer(socket.id);
@@ -399,7 +434,7 @@ io.on('connection', (socket) => {
   });
 
   // Player picked one of the three offered attribute choices
-  socket.on('selectAttribute', ({ roomId, key, tier }) => {
+  on('selectAttribute', ({ roomId, key, tier }) => {
     const room = gameRooms.get(roomId);
     if (room && typeof key === 'string' && typeof tier === 'string') {
       room.applyAttributeSelection(socket.id, key, tier);
@@ -438,7 +473,20 @@ setInterval(() => {
 }, 60000); // Every minute
 
 function generateRoomId() {
-  return Math.random().toString(36).substring(2, 8).toUpperCase();
+  // Loop until we get an id not already in use, so a collision can't hijack
+  // or clobber an existing room.
+  let id;
+  do {
+    id = Math.random().toString(36).substring(2, 8).toUpperCase();
+  } while (gameRooms.has(id));
+  return id;
+}
+
+// How many active rooms this socket is currently a member of (room-spam guard).
+function roomsForSocket(socketId) {
+  let n = 0;
+  gameRooms.forEach((room) => { if (room.hasPlayer(socketId)) n++; });
+  return n;
 }
 
 const PORT = process.env.PORT || 3001;

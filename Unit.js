@@ -309,6 +309,9 @@ class Unit {
    * Jump applies relative to the unit's current groundY
    */
   handleInput(input, groundLevel = 600, playAreaTop = 380) {
+    // Defensive: a malformed/null input must never throw (it would otherwise
+    // bubble up and crash the room's input handler).
+    if (!input || typeof input !== 'object') return;
     if (this.isKnockedOut) return;
 
     const speed = 4 * this.effectiveStats.movementSpeed;

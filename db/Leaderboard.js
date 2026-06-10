@@ -212,7 +212,8 @@ function init() {
  */
 function getOrCreatePlayer(rawName) {
   init();
-  const name = String(rawName || '').trim();
+  // Clamp length so a malicious/oversized name can't become a permanent row.
+  const name = String(rawName || '').trim().slice(0, 24);
   if (!name) return null;
   const key = name.toLowerCase();
   const now = new Date().toISOString();
