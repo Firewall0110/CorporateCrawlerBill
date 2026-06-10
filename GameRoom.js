@@ -1188,9 +1188,12 @@ class GameRoom {
       player.velocityX = 0;
       player.velocityY = 0;
 
-      // Clear death state
-      this.playerDeadTime = null;
-      this.playerDeadSocketId = null;
+      // Clear the room's death state only if THIS socket is the one that
+      // triggered it, so respawning never clears a different player's overlay.
+      if (this.playerDeadSocketId === socketId) {
+        this.playerDeadTime = null;
+        this.playerDeadSocketId = null;
+      }
 
       debugLog(`[Respawn] Player ${socketId} continued!`);
       this.io.to(this.id).emit('playerRespawned', {
