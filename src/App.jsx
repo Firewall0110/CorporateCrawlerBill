@@ -1073,6 +1073,10 @@ const Row = ({ label, value }) => (
 
 const BeatEmUpGame = () => {
   const [screen, setScreen] = useState('menu'); // menu, lobby, game
+  // Mirror of `screen` for use inside the (mount-once) socket effect, whose
+  // closures would otherwise read a stale 'menu'.
+  const screenRef = useRef('menu');
+  useEffect(() => { screenRef.current = screen; }, [screen]);
   const [socket, setSocket] = useState(null);
   const [roomId, setRoomId] = useState('');
   const [playerId, setPlayerId] = useState('');
@@ -1209,6 +1213,21 @@ const BeatEmUpGame = () => {
 
     newSocket.on('connect', () => {
       console.log('Connected to server');
+    });
+
+    // A disconnect mid-run can't be silently recovered: the server removes the
+    // player (and submits their session), so any auto-reconnect comes back as a
+    // brand-new socket id. Rather than leave the user staring at a frozen world,
+    // bail to the menu with a notice. Ignore 'io client disconnect' - that's our
+    // own close() on unmount.
+    newSocket.on('disconnect', (reason) => {
+      console.log('Disconnected from server:', reason);
+      if (reason === 'io client disconnect') return;
+      if (screenRef.current === 'game') {
+        setError('Connection lost - returned to menu');
+        setTimeout(() => setError(''), 4000);
+        setScreen('menu');
+      }
     });
 
     newSocket.on('gameState', (state) => {
@@ -2136,8 +2155,9 @@ const BeatEmUpGame = () => {
               </div>
             )}
 
-            {/* Game Over Screen */}
-            {gameState?.playerDead && !levelWon && (
+            {/* Game Over Screen - only the player who actually died sees this;
+                co-op teammates keep playing instead of all getting blocked. */}
+            {gameState?.playerDead && gameState?.deadPlayerId === playerId && !levelWon && (
               <div style={{
                 position: 'absolute',
                 top: 0,
