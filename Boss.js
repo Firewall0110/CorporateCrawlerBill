@@ -89,6 +89,10 @@ class Boss extends Enemy {
    * Update boss AI and attacks
    */
   updateAI(players, deltaTime) {
+    // Hits dealt to players this tick. The boss has no io handle, so GameRoom
+    // drains this after updateAI and emits playerHit events for VFX.
+    this.pendingHits = [];
+
     if (this.isKnockedOut || players.length === 0) {
       this.velocityX *= 0.85;
       return;
@@ -236,6 +240,21 @@ class Boss extends Enemy {
   }
 
   /**
+   * Record a hit on a player so GameRoom can emit a playerHit event for it
+   * (damage numbers / particles / screen shake). Position/health captured
+   * post-damage.
+   */
+  recordHit(player, damage) {
+    this.pendingHits.push({
+      targetId: player.id,
+      damage: Math.round(damage),
+      targetX: player.x,
+      targetY: player.y,
+      targetHealth: player.health
+    });
+  }
+
+  /**
    * Apply attack damage to players - each attack only damages ONCE per cycle
    * Counter-play built in for each attack type
    */
@@ -262,6 +281,7 @@ class Boss extends Enemy {
           if (distance < attack.radius) {
             player.takeDamage(attack.damage);
             player.lastHitTime = now;
+            this.recordHit(player, attack.damage);
             // Knockback away from boss
             const direction = player.x > this.x ? 1 : -1;
             player.applyKnockback(direction, 8);
@@ -291,6 +311,7 @@ class Boss extends Enemy {
           if (fromBoss * this.direction > 0 && Math.abs(fromBoss) < 1000) {
             player.takeDamage(attack.damage);
             player.lastHitTime = now;
+            this.recordHit(player, attack.damage);
             player.applyKnockback(this.direction, 6);
           }
         });
@@ -317,6 +338,7 @@ class Boss extends Enemy {
               if (distance < zone.radius) {
                 player.takeDamage(attack.damage);
                 player.lastHitTime = now;
+                this.recordHit(player, attack.damage);
                 const direction = player.x > zone.x ? 1 : -1;
                 player.applyKnockback(direction, 7);
               }
