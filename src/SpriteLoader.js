@@ -200,13 +200,16 @@ function processSheet(img) {
 // Per-frame algorithm:
 //   1. Crop a SOURCE REGION wider than the cell (cell + horizontal margin).
 //   2. Sample a GRID of seed points inside the cell interior and flood-fill
-//      each, walking through any opaque pixel; keep the LARGEST connected
-//      component. That component = this character + its extended limbs / FX.
-//      The flood reaches into the margin, so limbs spilling past the cell are
-//      captured, while neighbor characters (not pixel-connected) are excluded.
+//      each, walking through any opaque pixel; keep the component with the most
+//      pixels INSIDE the cell. That component = this character + its extended
+//      limbs / FX. The flood reaches into the (wide) margin, so a leaning head
+//      or extended leg spilling past the cell is captured, while neighbor
+//      characters sitting in the margin are excluded (they have little in-cell
+//      mass even when large overall).
 //      (A single fixed seed used to miss the body entirely on poses that lean
 //      out from under it - e.g. the high-kick extension - producing a stray
-//      leg-only crop. Grid + largest-component is robust to that.)
+//      leg-only crop; a too-tight margin then sliced the leaning head off.
+//      Grid + in-cell selection + wide margin is robust to both.)
 //   3. Bbox the chosen component, copy ONLY its pixels into the output canvas.
 //      Anything else in the source region (a neighbor's body) is discarded.
 //   4. Compute anchorX / anchorY from the bbox so the BODY (not the canvas
@@ -216,10 +219,12 @@ function processSheet(img) {
 // frames stay narrow, the SPECIAL frame with the bubble is wide, and the
 // body's screen position is stable across frame transitions.
 
-// Horizontal margin per side as a fraction of the cell width. 0.5 = grab
-// half a cell on each side. The component search then keeps only the largest
-// blob seeded from within the focal cell.
-const FRAME_MARGIN_FRAC = 0.5;
+// Horizontal margin per side as a fraction of the cell width. 1.0 = grab a
+// full cell on each side. The kick lean throws the head almost a full cell back
+// past the nominal frame, so a tight margin sliced the face off. A wide margin
+// is safe because the component is chosen by IN-CELL pixel mass (below), so a
+// neighbor frame sitting in the margin can never be picked even when it's large.
+const FRAME_MARGIN_FRAC = 1.0;
 
 function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH, footAnchor = false) {
   try {
@@ -257,7 +262,12 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH, footAnchor = false
     const label = new Int32Array(srcW * srcH); // 0 = unvisited; else component id
     const fstack = new Int32Array(srcW * srcH * 2);
     let nextLabel = 0;
-    let best = { id: 0, count: -1, minX: 0, minY: 0, maxX: -1, maxY: -1 };
+    // Pick the component with the most pixels INSIDE the cell, not the most
+    // total pixels. With the wide margin a neighbor frame can sit in the margin
+    // with a large total area, but its in-cell footprint is tiny, so in-cell
+    // mass reliably identifies THIS cell's character even when its own body
+    // (leaning head etc.) spills far into the margin.
+    let best = { id: 0, inCell: -1, minX: 0, minY: 0, maxX: -1, maxY: -1 };
     const cellLeft = cellX - srcX;
     const cellRight = cellLeft + cellW;
     const stepX = Math.max(5, Math.floor(cellW / 12));
@@ -266,14 +276,14 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH, footAnchor = false
       for (let gx = cellLeft + 3; gx < cellRight - 3; gx += stepX) {
         const p0 = gy * srcW + gx;
         if (label[p0] || data[p0 * 4 + 3] === 0) continue; // already labeled or transparent
-        // Flood this component, labeling pixels and tracking bbox + pixel count.
+        // Flood this component, labeling pixels and tracking bbox + in-cell count.
         nextLabel++;
-        let f = 0, count = 0, minX = srcW, minY = srcH, maxX = -1, maxY = -1;
+        let f = 0, inCell = 0, minX = srcW, minY = srcH, maxX = -1, maxY = -1;
         label[p0] = nextLabel; fstack[f++] = gx; fstack[f++] = gy;
         while (f > 0) {
           const y = fstack[--f];
           const x = fstack[--f];
-          count++;
+          if (x >= cellLeft && x < cellRight) inCell++;
           if (x < minX) minX = x;
           if (x > maxX) maxX = x;
           if (y < minY) minY = y;
@@ -283,7 +293,7 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH, footAnchor = false
           if (y > 0)        { const q = (y - 1) * srcW + x; if (!label[q] && data[q * 4 + 3] !== 0) { label[q] = nextLabel; fstack[f++] = x; fstack[f++] = y - 1; } }
           if (y < srcH - 1) { const q = (y + 1) * srcW + x; if (!label[q] && data[q * 4 + 3] !== 0) { label[q] = nextLabel; fstack[f++] = x; fstack[f++] = y + 1; } }
         }
-        if (count > best.count) best = { id: nextLabel, count, minX, minY, maxX, maxY };
+        if (inCell > best.inCell) best = { id: nextLabel, inCell, minX, minY, maxX, maxY };
       }
     }
     if (best.maxX < 0) return null; // no opaque pixel in the cell - caller falls back
