@@ -22,64 +22,9 @@
  * when the unit's direction is left.
  */
 
-// ===== A/B sprite-sheet variant selection =====
-//
-// Two candidate sheets live in public/sprites:
-//   A: BillSpriteSheet.png   (the original/current artwork)
-//   B: BillSpriteSheetB.png  (alternate art - clearer punch / special FX)
-//
-// The variant is picked at module load time and cached for the session.
-// Priority: ?sprite=A|B query param > localStorage('spriteVariant') > 'A'.
-// When the query param is present we also write it back to localStorage so
-// the choice persists across reloads / shared-link visits.
-const SHEET_A_SRC = '/sprites/BillSpriteSheet.png';
-const SHEET_B_SRC = '/sprites/BillSpriteSheetB.png';
-
-function readSpriteVariant() {
-  if (typeof window === 'undefined') return 'A';
-  try {
-    const params = new URLSearchParams(window.location.search);
-    const urlVal = (params.get('sprite') || params.get('sprites') || '').toUpperCase();
-    if (urlVal === 'A' || urlVal === 'B') {
-      try { window.localStorage.setItem('spriteVariant', urlVal); } catch (_) {}
-      return urlVal;
-    }
-    const stored = (window.localStorage.getItem('spriteVariant') || '').toUpperCase();
-    if (stored === 'A' || stored === 'B') return stored;
-  } catch (_) { /* localStorage may be blocked; fall through to default */ }
-  return 'A';
-}
-
-const SPRITE_VARIANT = readSpriteVariant();
-const SHEET_SRC = SPRITE_VARIANT === 'B' ? SHEET_B_SRC : SHEET_A_SRC;
-console.log(`[SpriteLoader] Using sprite variant ${SPRITE_VARIANT} (${SHEET_SRC})`);
-
-/**
- * Return the currently-active sprite variant ('A' or 'B'). Used by the HUD
- * toggle button to render the active state correctly.
- */
-export function getSpriteVariant() {
-  return SPRITE_VARIANT;
-}
-
-/**
- * Switch to the other variant. Writes to localStorage and reloads the page
- * (the sprite cache is module-scoped, so a reload is the simplest way to
- * re-run the chroma-key + slicing against the new sheet).
- */
-export function setSpriteVariant(next) {
-  const v = (next || '').toUpperCase();
-  if (v !== 'A' && v !== 'B') return;
-  try { window.localStorage.setItem('spriteVariant', v); } catch (_) {}
-  // Clear ?sprite query so it doesn't pin the page to one variant on reload
-  try {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('sprite');
-    url.searchParams.delete('sprites');
-    window.history.replaceState({}, '', url.toString());
-  } catch (_) {}
-  window.location.reload();
-}
+// Bill's sprite sheet. (There used to be an A/B variant toggle here, but the
+// two candidate sheets were byte-identical, so it was a no-op - removed.)
+const SHEET_SRC = '/sprites/BillSpriteSheet.png';
 
 // Uniform grid: 8 cols (col 0 = label, cols 1..7 = frame slots), 6 rows.
 const GRID_COLS = 8;

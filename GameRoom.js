@@ -1062,8 +1062,10 @@ class GameRoom {
       player.health = Math.min(player.maxHealth, Math.round(player.health * ratio));
     }
 
-    // Broadcast updated player state so the HUD picks up the new attribute
-    this.io.to(this.id).emit('playerJoined', { player: player.getState() });
+    // Broadcast updated player state so the HUD picks up the new attribute.
+    // (Was reusing 'playerJoined', which made client logs claim a join on every
+    // attribute pick - use a dedicated 'playerUpdated' event instead.)
+    this.io.to(this.id).emit('playerUpdated', { player: player.getState() });
   }
 
   /**
