@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
 import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
+import { getAttackAnim, pruneAnimClocks, resetAnimClocks } from './AnimClock';
 import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
 import { loadBossSprites, getBossSprites, pickBossFrame, loadBossDeathSprites, pickBossDeathFrame } from './BossSprites';
 
@@ -1499,6 +1500,9 @@ const BeatEmUpGame = () => {
 
     const ctx = canvas.getContext('2d');
 
+    // Throttle AnimClock pruning (closure-scoped, persists across rAF frames).
+    let lastPruneAt = 0;
+
     const render = () => {
       const gameState = gameStateRef.current;
       if (!gameState || !gameState.players) {
@@ -1516,6 +1520,17 @@ const BeatEmUpGame = () => {
       }
 
       const now = Date.now();
+
+      // Periodically drop AnimClock entries for despawned units so a long
+      // session of spawned-and-killed enemies doesn't leak clocks (~every 2s).
+      if (now - lastPruneAt > 2000) {
+        lastPruneAt = now;
+        const liveIds = new Set();
+        gameState.players.forEach(p => liveIds.add(p.id));
+        if (gameState.enemies) gameState.enemies.forEach(e => liveIds.add(e.id));
+        if (gameState.boss) liveIds.add(gameState.boss.id);
+        pruneAnimClocks(liveIds);
+      }
 
       // Calculate screen shake offset
       let shakeX = 0, shakeY = 0;
@@ -1684,6 +1699,9 @@ const BeatEmUpGame = () => {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
       }
+      // Leaving the game screen: wipe all per-unit animation clocks so a new
+      // session/room starts clean (and nothing leaks between games).
+      resetAnimClocks();
     };
   }, [screen, playerId]);
 
@@ -2734,9 +2752,8 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
   // so the lunge goes the right way even though we don't mirror the sprite).
   let lunge = 0;
   if (unit.isAttacking) {
-    const elapsed = now - (unit.attackStartTime || now);
-    const dur = unit.attackDuration || 300;
-    const t = Math.min(1, elapsed / dur);
+    // Client-local progress (AnimClock) - never `now - server attackStartTime`.
+    const t = getAttackAnim(unit, now)?.progress ?? 0;
     lunge = facing * Math.sin(t * Math.PI) * 6;
   }
 
@@ -3036,7 +3053,11 @@ function drawSpecialExplosion(ctx, cx, cy, progress, opacity, now) {
 function drawAttackEffect(ctx, unit, screenX, screenY, facing, now) {
   const cx = screenX + unit.width / 2;
   const cy = screenY + unit.height / 2;
-  const attackProgress = Math.min(1, ((now - unit.attackStartTime) || 0) / (unit.attackDuration || 300));
+  // Client-local attack progress (AnimClock), shared with the sprite-frame clock
+  // so the FX stays in sync with the swing. The old `now - server attackStartTime`
+  // was always ~0 (timestamp not broadcast) -> opacity sin(0) = 0, which is why
+  // these effects were invisible.
+  const attackProgress = getAttackAnim(unit, now)?.progress ?? 0;
   const attackOpacity = Math.sin(attackProgress * Math.PI); // Fade in/out
 
   if (unit.attackType === 'special') {

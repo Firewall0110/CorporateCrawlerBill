@@ -51,6 +51,14 @@ class Unit {
     this.isAttacking = false;
     this.attackStartTime = 0;
     this.attackDuration = 300;
+    // Opaque per-unit attack-instance counter, bumped on every performAttack.
+    // Broadcast to clients so they can detect when a NEW attack starts (even a
+    // repeat of the same type) and (re)stamp a CLIENT-LOCAL animation clock.
+    // We deliberately never broadcast attackStartTime: it's a server Date.now()
+    // and the client's now is a different machine's Date.now(), so any
+    // client-side `now - attackStartTime` is corrupted by clock skew. Animations
+    // must be timed on the client's own clock; attackSeq is just the trigger.
+    this.attackSeq = 0;
     this.attackCooldown = 0;
     this.hasHit = false;
     this.isKnockedOut = false;
@@ -208,6 +216,13 @@ class Unit {
       velocityX: this.velocityX, // For walking animation
       lastHitTime: this.lastHitTime, // For hit flash effect
       attackType: this.attackType, // For attack visual differentiation
+      // Animation timing for the client. attackSeq is an opaque change-token
+      // (client restarts its LOCAL clock when it changes); attackDuration is a
+      // RELATIVE ms span, safe for client math. NEVER broadcast attackStartTime
+      // here - it's a server timestamp and would be diffed against the client's
+      // own clock (different machine), corrupting the animation via clock skew.
+      attackSeq: this.attackSeq,
+      attackDuration: this.attackDuration,
       // Effective stats: the client needs attackSpeed to render the right
       // cooldown sweep on the action buttons (otherwise attack-speed buffs
       // appear cosmetic - the UI button stays grey for the baseline duration
@@ -297,6 +312,7 @@ class Unit {
 
     this.isAttacking = true;
     this.attackStartTime = Date.now();
+    this.attackSeq++; // new attack instance - clients restart the anim clock
     this.hasHit = false;
     this.attackType = attackType;
 

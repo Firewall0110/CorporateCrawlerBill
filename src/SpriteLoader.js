@@ -22,6 +22,8 @@
  * when the unit's direction is left.
  */
 
+import { getAttackAnim, getKoElapsed } from './AnimClock';
+
 // Bill's sprite sheet. (There used to be an A/B variant toggle here, but the
 // two candidate sheets were byte-identical, so it was a no-op - removed.)
 const SHEET_SRC = '/sprites/BillSpriteSheet.png';
@@ -520,15 +522,14 @@ export function pickBillFrame(unit, now) {
   };
 
   // KNOCKED OUT - Knock Down row, advance through frames over ~840 ms then
-  // hold final lying-down frame for the duration of the K.O.
+  // hold final lying-down frame for the duration of the K.O. Elapsed comes from
+  // the client-local AnimClock registry (the unit object is replaced every
+  // broadcast, so a `_koStartTime` stashed on it would reset ~30x/sec).
   if (unit.isKnockedOut) {
-    if (!unit._koStartTime) unit._koStartTime = now;
-    const elapsed = now - unit._koStartTime;
+    const elapsed = getKoElapsed(unit, now);
     const koFrames = ANIM.KO.frameCount;
     const frameIdx = Math.min(koFrames - 1, Math.floor(elapsed / 120));
     return { sprite: get('KO', frameIdx), mirror, type: 'defeated' };
-  } else if (unit._koStartTime) {
-    unit._koStartTime = undefined;
   }
 
   // JUMPING - dedicated row now. Pick frame by vertical velocity so the
@@ -544,11 +545,14 @@ export function pickBillFrame(unit, now) {
     return { sprite: get('JUMP', frameIdx), mirror, type: 'jump' };
   }
 
-  // ATTACKING - Punch / Kick / Special by attackType
+  // ATTACKING - Punch / Kick / Special by attackType. Progress is timed on the
+  // client clock via AnimClock (keyed off the broadcast attackSeq token), NOT
+  // off a server timestamp - see AnimClock.js for why. The 0.999 clamp holds the
+  // final pose if our local clock outruns attackDuration before the broadcast
+  // clears isAttacking, instead of wrapping back to frame 0.
   if (unit.isAttacking) {
-    const elapsed = now - (unit.attackStartTime || now);
-    const duration = unit.attackDuration || 300;
-    const progress = Math.min(0.999, elapsed / duration);
+    const anim = getAttackAnim(unit, now);
+    const progress = Math.min(0.999, anim ? anim.progress : 0);
     let animName;
     if (unit.attackType === 'kick') animName = 'KICK';
     else if (unit.attackType === 'special') animName = 'SPECIAL';
