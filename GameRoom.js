@@ -13,6 +13,10 @@ const debugLog = (...args) => { if (DEBUG) console.log(...args); };
 // bandwidth. The client renders the latest snapshot every animation frame.
 const BROADCAST_HZ = 30;
 
+// How long a downed mook's corpse lingers (broadcast for rendering only) so the
+// client can play its KO tilt before it's removed.
+const ENEMY_CORPSE_LINGER_MS = 800;
+
 /**
  * GameRoom - Manages a single multiplayer game session
  * Handles players, enemies, level progression, stat management
@@ -25,6 +29,11 @@ class GameRoom {
     this.io = io;
     this.players = new Map(); // socketId -> Player
     this.enemies = []; // Array of Enemy instances
+    // Recently-downed mooks kept around briefly (ENEMY_CORPSE_LINGER_MS) so the
+    // client can play the KO tilt animation. They're excluded from `enemies`, so
+    // gameplay (combat/progression) never sees them - they only get broadcast
+    // for rendering.
+    this.corpses = [];
     this.boss = null; // Current boss (if in boss zone)
     this.status = 'waiting'; // waiting, playing, finished
     this.createdAt = Date.now();
@@ -379,6 +388,26 @@ class GameRoom {
     // Update boss if exists
     if (this.boss) {
       this.boss.updateAI(Array.from(this.players.values()), deltaTime);
+
+      // Boss attacks deal damage internally and used to be silent on the client
+      // (no damage numbers / particles / shake - the hardest hits in the game
+      // were the least readable). Surface each hit as a playerHit event.
+      if (this.boss.pendingHits && this.boss.pendingHits.length) {
+        for (const hit of this.boss.pendingHits) {
+          this.io.to(this.id).emit('playerHit', {
+            attackerId: this.boss.id,
+            targetId: hit.targetId,
+            damage: hit.damage,
+            targetHealth: hit.targetHealth,
+            targetX: hit.targetX,
+            targetY: hit.targetY,
+            attackType: 'kick', // medium-heavy feedback tier (solid shake + particles)
+            isEnemy: false,     // target is a player -> red damage numbers
+            isCritical: false
+          });
+        }
+      }
+
       // Boss is taller than players (height 110 vs 60). If we clamp its
       // groundY to the same value as players, the boss's feet (y + height)
       // sit 50 px BELOW the canvas bottom and its lower body is clipped.
@@ -394,7 +423,10 @@ class GameRoom {
     // Combat collision detection
     this.checkCombat();
 
-    // Clean up dead enemies and track kills
+    // Track kills and retire dead enemies. Each death is counted exactly once
+    // (the tick it dies), then the mook is moved out of `this.enemies` into the
+    // short-lived `corpses` list so the client can play its KO tilt instead of
+    // it popping out of existence. Gameplay logic only ever sees `this.enemies`.
     const deadEnemies = this.enemies.filter(enemy => enemy.isKnockedOut && enemy.health <= 0);
     deadEnemies.forEach(enemy => {
       this.totalKills++;
@@ -405,8 +437,15 @@ class GameRoom {
       this.players.forEach(player => {
         player.sessionStats.ticketsKilled++;
       });
+      enemy.koAt = now;
+      this.corpses.push(enemy);
     });
     this.enemies = this.enemies.filter(enemy => !enemy.isKnockedOut || enemy.health > 0);
+
+    // Expire corpses once their linger window passes.
+    if (this.corpses.length) {
+      this.corpses = this.corpses.filter(c => (now - (c.koAt || now)) < ENEMY_CORPSE_LINGER_MS);
+    }
 
     // Centralized player death detection - catches deaths from ALL sources
     // (regular combat, boss attacks, etc.) Only triggers once until respawn
@@ -636,6 +675,7 @@ class GameRoom {
 
     // Clear any enemies / boss carried over (defensive)
     this.enemies = [];
+    this.corpses = [];
     if (this.boss) {
       this.boss = null;
     }
@@ -1248,7 +1288,8 @@ class GameRoom {
       roomName: this.name,
       status: this.status,
       players: Array.from(this.players.values()).map(p => p.getState()),
-      enemies: this.enemies.map(e => e.getState()),
+      // Include lingering corpses so the client can render their KO animation.
+      enemies: [...this.enemies, ...this.corpses].map(e => e.getState()),
       boss: this.boss ? this.boss.getState() : null,
       worldWidth: this.worldWidth,
       worldHeight: this.worldHeight,
