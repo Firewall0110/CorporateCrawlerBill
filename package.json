@@ -22,6 +22,7 @@
     "server:dev": "nodemon server.js",
     "stage:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-stage.js",
     "stages:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-stages.js",
+    "stages:compress": "npm install --no-save sharp && node scripts/compress-stages.js",
     "tickets:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-tickets.js",
     "boss:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-boss.js",
     "boss-death:gen": "npm install --no-save @napi-rs/canvas && node scripts/generate-boss-death.js",
