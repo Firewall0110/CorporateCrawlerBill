@@ -1121,7 +1121,7 @@ const BeatEmUpGame = () => {
   // Falls back to /sprites/stage.png if specific stage images don't exist
   const stageImagesRef = useRef([null, null, null, null]);
   useEffect(() => {
-    const sources = ['/sprites/stage1.png', '/sprites/stage2.png', '/sprites/stage3.png', '/sprites/stage4.png'];
+    const sources = ['/sprites/stage1.webp', '/sprites/stage2.webp', '/sprites/stage3.webp', '/sprites/stage4.webp'];
     sources.forEach((src, idx) => {
       const img = new Image();
       img.onload = () => {
