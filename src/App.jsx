@@ -26,6 +26,17 @@ const HIT_FLASH_IMPACT_MS = 80;
 // stars fade out over the back half of this window.
 const STUN_STARS_DURATION_MS = 700;
 
+// Enemy death "flash-out" duration (ms). When a mook dies it brightens to
+// white, scales up slightly, and fades to nothing over this window (replacing
+// the old 90-degree KO tilt). The server keeps the corpse in the broadcast for
+// ENEMY_CORPSE_LINGER_MS (~320ms) so the full flash always gets to play.
+// Players are NOT affected - they keep their own knockout/respawn visuals.
+const ENEMY_DEATH_FLASH_MS = 300;
+
+// Rarity ranking, low -> high. Used to pick the "dominant" rarity color when
+// several teammates' buffs combine into one net-total row in the ally panel.
+const RARITY_ORDER = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'celestial'];
+
 // The bottom-left debug overlay (SPAWNED / ALIVE / SECTION / CLEAR / X POS) is
 // opt-in so it doesn't ship to players: add ?debug=1 to the URL or set
 // localStorage.debug = '1'. Read once at load.
@@ -1077,9 +1088,14 @@ const BeatEmUpGame = () => {
 
   // Visual effects refs (mutable, don't trigger re-renders)
   const damageNumbersRef = useRef([]); // {id, x, y, value, color, spawnTime, vy}
-  const hitParticlesRef = useRef([]); // {x, y, vx, vy, color, life}
+  const hitParticlesRef = useRef([]); // {x, y, vx, vy, color, life, gravity?, size?}
   const screenShakeRef = useRef({ intensity: 0, until: 0 });
   const flashEffectRef = useRef({ color: null, until: 0 });
+  // Death-flash bookkeeping for enemy mooks: unit.id -> Date.now() at the
+  // first frame we saw it knocked out. Drives the ~300ms flash-out animation
+  // and gates the one-time burst of rising light particles. Entries are
+  // pruned each frame for ids no longer present in the broadcast.
+  const deathOnsetRef = useRef(new Map());
 
   // Client-side cooldown predictions (for visual feedback on action buttons)
   // Each entry: { start: ms, end: ms }. Read by MobileControls each frame.
@@ -1541,6 +1557,45 @@ const BeatEmUpGame = () => {
       // Play area depth boundaries are rendered through the tiled ground
       // No need for explicit line — the back wall transitions to floor naturally
 
+      // Track enemy death onsets for the flash-out effect. The first frame a
+      // mook arrives knocked out we stamp Date.now() (drives the ~300ms
+      // brighten/fade) and fire a ONE-TIME burst of rising light particles at
+      // its body center. Stale entries (ids that left the broadcast once the
+      // server's corpse linger expires) are pruned so the map can't grow.
+      if (gameState.enemies) {
+        const liveIds = new Set();
+        gameState.enemies.forEach(e => {
+          liveIds.add(e.id);
+          if (e.isKnockedOut && !deathOnsetRef.current.has(e.id)) {
+            deathOnsetRef.current.set(e.id, now);
+            // Light burst: small white/cyan/pale-yellow motes radiating out
+            // and drifting UP. Low gravity (vs the 0.3 hit-spark default) so
+            // they hang and rise like escaping light rather than debris.
+            const lightColors = ['#ffffff', '#bfffff', '#fff0a0'];
+            const burstCount = 14;
+            const ecx = e.x + (e.width || 40) / 2;
+            const ecy = e.y + (e.height || 60) / 2;
+            for (let i = 0; i < burstCount; i++) {
+              const angle = (Math.PI * 2 * i) / burstCount + Math.random() * 0.5;
+              const speed = 1 + Math.random() * 2;
+              hitParticlesRef.current.push({
+                x: ecx,
+                y: ecy,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed * 0.5 - (1.2 + Math.random() * 1.6),
+                color: lightColors[i % lightColors.length],
+                life: 1.0,
+                gravity: 0.05,
+                size: 2 + Math.random()
+              });
+            }
+          }
+        });
+        for (const id of deathOnsetRef.current.keys()) {
+          if (!liveIds.has(id)) deathOnsetRef.current.delete(id);
+        }
+      }
+
       // Build sorted render list (sort by Y so deeper units render behind)
       const allUnits = [];
       if (gameState.enemies) gameState.enemies.forEach(e => allUnits.push({ unit: e, isPlayer: false, isBoss: false }));
@@ -1553,7 +1608,15 @@ const BeatEmUpGame = () => {
         if (isBoss) {
           drawBoss(ctx, unit, cameraX, gameState.groundLevel, now);
         } else {
-          drawUnit(ctx, unit, cameraX, gameState.groundLevel, isPlayer && unit.id === playerId, now);
+          // Dead enemies flash out over ENEMY_DEATH_FLASH_MS, then vanish
+          // (the server corpse may linger a few extra ms - skip drawing it).
+          let deathT = 0;
+          if (!isPlayer && unit.isKnockedOut) {
+            const onset = deathOnsetRef.current.get(unit.id);
+            deathT = onset != null ? Math.min(1, (now - onset) / ENEMY_DEATH_FLASH_MS) : 1;
+            if (deathT >= 1) return;
+          }
+          drawUnit(ctx, unit, cameraX, gameState.groundLevel, isPlayer && unit.id === playerId, now, deathT);
         }
       });
 
@@ -1674,6 +1737,7 @@ const BeatEmUpGame = () => {
     // Clear visual effects refs
     damageNumbersRef.current = [];
     hitParticlesRef.current = [];
+    deathOnsetRef.current.clear();
     screenShakeRef.current = { intensity: 0, until: 0 };
     flashEffectRef.current = { color: null, until: 0 };
     cooldownsRef.current = {
@@ -2290,6 +2354,50 @@ function drawCrawlerNameTag(ctx, name, cx, bottomY, isMe) {
   ctx.restore();
 }
 
+/**
+ * Player overhead readout: name tag stacked on a chunky health bar with exact
+ * HP numbers. Players get this INSTEAD of the thin enemy-style sliver - with
+ * max health down to 200 (post-playtest), knowing your exact HP matters.
+ *   anchorY = y of the bar's BOTTOM edge (a few px above the sprite's head).
+ * Layout (bottom-up): health bar w/ centered "HP/MAX" text, then the name tag.
+ */
+function drawPlayerOverhead(ctx, unit, cx, anchorY, isMe) {
+  const barW = 46;
+  const barH = 6;
+  const barX = cx - barW / 2;
+  const barY = anchorY - barH;
+
+  ctx.save();
+
+  // Dark backing with a 1px border so the bar reads over busy backdrops
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(barX - 1, barY - 1, barW + 2, barH + 2);
+
+  // Fill, classic traffic-light thresholds
+  const maxHealth = unit.maxHealth || 1;
+  const pct = Math.max(0, Math.min(1, unit.health / maxHealth));
+  ctx.fillStyle = pct > 0.5 ? '#00ff66' : pct > 0.25 ? '#ffcc00' : '#ff3333';
+  ctx.fillRect(barX, barY, barW * pct, barH);
+
+  // Exact numbers centered on the bar (tiny, but the bar color carries the
+  // at-a-glance read; the digits are for the "can I survive one more hit?" check)
+  ctx.font = '6px "Press Start 2P", monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const hpText = `${Math.ceil(unit.health)}/${maxHealth}`;
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+  ctx.strokeText(hpText, cx, barY + barH / 2 + 0.5);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(hpText, cx, barY + barH / 2 + 0.5);
+  ctx.textBaseline = 'alphabetic';
+
+  ctx.restore();
+
+  // Name tag sits just above the bar (cyan + outline marks the local player)
+  drawCrawlerNameTag(ctx, unit.name, cx, barY - 3, isMe);
+}
+
 // Reusable offscreen buffer for silhouette-masked sprite tinting (hit flash).
 // We can't tint a sprite by filling its rect with `source-atop` on the MAIN
 // canvas: the stage is drawn opaque into that same canvas, so the mask covers
@@ -2330,7 +2438,7 @@ function drawSpriteTinted(ctx, srcCanvas, dx, dy, dw, dh, tint) {
   ctx.drawImage(scratch, 0, 0, Math.ceil(dw), Math.ceil(dh), dx, dy, dw, dh);
 }
 
-function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
+function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now, deathT = 0) {
   if (!unit) return;
 
   const screenX = unit.x - cameraX;
@@ -2380,7 +2488,7 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
   if (unit.team === 'enemies' && getTicketSprites()) {
     const ticketFrame = pickTicketFrame(unit);
     if (ticketFrame && ticketFrame.canvas) {
-      drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, now, ticketFrame);
+      drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, now, ticketFrame, deathT);
       return;
     }
     // Otherwise fall through to procedural
@@ -2388,8 +2496,9 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 
   // Procedural rendering for enemies / when sprites failed to load
 
-  // Skip drawing body if knocked out (fall over animation)
-  const koTilt = unit.isKnockedOut ? Math.PI / 2 : 0;
+  // Knocked-out PLAYERS fall over (90-degree tilt) until they respawn.
+  // Enemies no longer tilt - they get the flash-out treatment below instead.
+  const koTilt = (unit.isKnockedOut && unit.team === 'players') ? Math.PI / 2 : 0;
 
   // Render the procedural body into the offscreen buffer (origin at body
   // center) so the hit-flash tint can be masked to its silhouette - same reason
@@ -2498,10 +2607,28 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
     g.globalCompositeOperation = 'source-over';
   }
 
-  // Blit the body into the world at the unit's position, honoring the KO tilt.
+  // Enemy death flash-out: whiten the silhouette toward full white as the
+  // flash progresses (same source-atop masking trick as the hit flash).
+  const dying = deathT > 0 && unit.team !== 'players';
+  if (dying) {
+    g.globalCompositeOperation = 'source-atop';
+    g.fillStyle = `rgba(255, 255, 255, ${Math.min(1, deathT * 2)})`;
+    g.fillRect(0, 0, bufW, bufH);
+    g.globalCompositeOperation = 'source-over';
+  }
+
+  // Blit the body into the world at the unit's position, honoring the KO tilt
+  // (players only). Dying enemies fade out and swell slightly while drawn
+  // additively, so they read as dissolving into light rather than falling.
   ctx.save();
   ctx.translate(cx, screenY + h / 2 + bobAmount);
   ctx.rotate(koTilt * facing);
+  if (dying) {
+    ctx.globalAlpha = 1 - deathT;
+    ctx.globalCompositeOperation = 'lighter';
+    const deathScale = 1 + deathT * 0.15;
+    ctx.scale(deathScale, deathScale);
+  }
   ctx.drawImage(scratch, 0, 0, Math.ceil(bufW), Math.ceil(bufH), -ox, -oy, bufW, bufH);
   ctx.restore();
 
@@ -2516,8 +2643,8 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
     drawAttackEffect(ctx, unit, screenX, screenY, facing, now);
   }
 
-  // === HEALTH BAR ===
-  if (!unit.isKnockedOut) {
+  // === HEALTH BAR (enemies only - players get the bigger overhead readout) ===
+  if (!unit.isKnockedOut && unit.team !== 'players') {
     const barWidth = w;
     const barHeight = 4;
     const barX = screenX;
@@ -2533,13 +2660,13 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
     ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
   }
 
-  // === NAME TAG (all players, so co-op players can tell each other apart) ===
-  if (unit.team === 'players') {
-    drawCrawlerNameTag(ctx, unit.name, cx, screenY - 14, isMe);
+  // === PLAYER OVERHEAD: name tag + big health bar + HP numbers ===
+  if (unit.team === 'players' && !unit.isKnockedOut) {
+    drawPlayerOverhead(ctx, unit, cx, screenY - 8, isMe);
   }
 
-  // === K.O. INDICATOR ===
-  if (unit.isKnockedOut) {
+  // === K.O. INDICATOR (players only - enemies flash out instead) ===
+  if (unit.isKnockedOut && unit.team === 'players') {
     ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
     ctx.font = 'bold 12px "Press Start 2P", monospace';
     ctx.textAlign = 'center';
@@ -2553,9 +2680,12 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now) {
 /**
  * Draw an enemy as a help-ticket monster sprite.
  * Frame is pre-validated by caller. Flips for facing direction, applies
- * hit flash, attack-attacking "lunge", and renders health bar / KO text.
+ * hit flash, attack-attacking "lunge", and renders health bar. On death
+ * (deathT 0->1 over ENEMY_DEATH_FLASH_MS) the sprite brightens to white,
+ * swells slightly, and fades to nothing - the "dissolve into light" beat
+ * that pairs with the rising light particles spawned by the render loop.
  */
-function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, now, frame) {
+function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hitFlash, flashAlpha, now, frame, deathT = 0) {
   const sprite = frame;
   // Ticket sprites are intentionally a bit chunkier than the hitbox so they
   // read clearly. They're shorter than Bill (matching enemy size hierarchy).
@@ -2569,11 +2699,16 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
 
   ctx.save();
 
-  // Knockout: tilt over
-  if (unit.isKnockedOut) {
-    ctx.translate(cx, feetY);
-    ctx.rotate((Math.PI / 2) * facing);
-    ctx.translate(-cx, -feetY);
+  // Death flash-out: fade + swell around the sprite center, drawn additively
+  // so the whitened body glows against the backdrop as it disappears.
+  if (deathT > 0) {
+    const midY = drawY + drawH / 2;
+    const deathScale = 1 + deathT * 0.15;
+    ctx.globalAlpha = 1 - deathT;
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(cx, midY);
+    ctx.scale(deathScale, deathScale);
+    ctx.translate(-cx, -midY);
   }
 
   // Attacking: small forward lunge toward the target (still uses `facing`
@@ -2596,7 +2731,12 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
   // decorative body icons consistent, with zero loss of "facing" cues.
   // Hit flash: white tint masked to the sprite silhouette (not a box). See
   // drawSpriteTinted for why the tint can't be done directly on the main canvas.
-  const tint = hitFlash ? `rgba(255, 255, 255, ${flashAlpha})` : null;
+  // The death flash-out reuses the same masking to push the body toward pure
+  // white (ramping fast - fully white by the halfway point of the fade).
+  let tint = hitFlash ? `rgba(255, 255, 255, ${flashAlpha})` : null;
+  if (deathT > 0) {
+    tint = `rgba(255, 255, 255, ${Math.min(1, deathT * 2)})`;
+  }
   drawSpriteTinted(ctx, sprite.canvas, drawX + lunge, drawY, drawW, drawH, tint);
 
   ctx.restore();
@@ -2613,17 +2753,7 @@ function drawTicketSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, 
     ctx.fillStyle = hp > 0.5 ? '#00ff66' : hp > 0.25 ? '#ffcc00' : '#ff3333';
     ctx.fillRect(barX, barY, barWidth * hp, barHeight);
   }
-
-  // K.O. indicator
-  if (unit.isKnockedOut) {
-    ctx.fillStyle = 'rgba(255, 0, 0, 0.9)';
-    ctx.font = 'bold 12px "Press Start 2P", monospace';
-    ctx.textAlign = 'center';
-    ctx.shadowColor = '#000000';
-    ctx.shadowBlur = 4;
-    ctx.fillText('K.O.', cx, screenY + h / 2);
-    ctx.shadowBlur = 0;
-  }
+  // (No K.O. text for enemies - the flash-out IS the death feedback.)
 }
 
 /**
@@ -2717,24 +2847,12 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
     drawAttackEffect(ctx, unit, screenX, screenY, facing, now);
   }
 
-  // Health bar (above sprite)
+  // Overhead readout: name tag + big health bar + HP numbers. Replaces the
+  // old thin enemy-style sliver so a player's exact health is readable at a
+  // glance mid-brawl (post-playtest: nobody noticed they were at 10%).
   if (!unit.isKnockedOut) {
-    const barWidth = w;
-    const barHeight = 4;
-    const barX = screenX;
-    const barY = drawY - 8;
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-    ctx.fillRect(barX - 1, barY - 1, barWidth + 2, barHeight + 2);
-
-    const healthPercent = unit.health / unit.maxHealth;
-    ctx.fillStyle = healthPercent > 0.5 ? '#00ff66' : healthPercent > 0.25 ? '#ffcc00' : '#ff3333';
-    ctx.fillRect(barX, barY, barWidth * healthPercent, barHeight);
+    drawPlayerOverhead(ctx, unit, cx, drawY - 4, isMe);
   }
-
-  // Crawler name tag above every player (cyan + outline for the local player)
-  // so it's easy to tell which crawler is which once a room fills up.
-  drawCrawlerNameTag(ctx, unit.name, cx, drawY - 10, isMe);
 
   // K.O. indicator
   if (unit.isKnockedOut) {
@@ -2988,14 +3106,18 @@ function updateAndDrawDamageNumbers(ctx, numbers, cameraX) {
 }
 
 /**
- * Update and draw hit particles
+ * Update and draw hit particles.
+ * Particles may optionally carry `gravity` (default 0.3 - the classic heavy
+ * hit-spark arc) and `size` (default 4px square). Enemy death-light motes use
+ * a tiny gravity (~0.05) and smaller size so they drift upward like embers
+ * instead of falling like debris.
  */
 function updateAndDrawParticles(ctx, particles, cameraX) {
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i];
     p.x += p.vx;
     p.y += p.vy;
-    p.vy += 0.3; // gravity
+    p.vy += (p.gravity !== undefined ? p.gravity : 0.3); // gravity
     p.life -= 0.04;
 
     if (p.life <= 0) {
@@ -3003,10 +3125,11 @@ function updateAndDrawParticles(ctx, particles, cameraX) {
       continue;
     }
 
+    const size = p.size !== undefined ? p.size : 4;
     const screenX = p.x - cameraX;
     ctx.fillStyle = p.color;
     ctx.globalAlpha = Math.max(0, p.life);
-    ctx.fillRect(screenX - 2, p.y - 2, 4, 4);
+    ctx.fillRect(screenX - size / 2, p.y - size / 2, size, size);
     ctx.globalAlpha = 1;
   }
 }
@@ -3739,6 +3862,112 @@ function lightenHex(hex, amount) {
 }
 
 
+// Compact stat names for the ally-buff totals panel. Player-team buffs read
+// as bare stats; enemy/boss debuffs get an ENEMY/BOSS prefix at render time.
+const ALLY_STAT_LABELS = {
+  attack: 'ATK',
+  attackSpeed: 'ATK SPD',
+  movementSpeed: 'MOVE',
+  maxHealth: 'MAX HP',
+  armor: 'ARMOR',
+  attackRange: 'RANGE'
+};
+const DEBUFF_STAT_LABELS = {
+  attack: 'ATK',
+  attackSpeed: 'ATK SPD',
+  movementSpeed: 'SPD',
+  maxHealth: 'HP',
+  armor: 'ARM',
+  attackRange: 'RANGE'
+};
+
+/**
+ * Top-right "ALLY BUFFS" panel: net team totals contributed by every OTHER
+ * player in the room. Rather than listing each teammate's picks (unreadable
+ * past 2 players), modifiers are mathematically combined per stat:
+ *   - armor is a FLAT stat -> values are summed (+N player armor, -N enemy)
+ *   - everything else is multiplicative -> values are multiplied, shown as
+ *     the net percentage (product 1.8 * 1.5 = "+170%", 0.45 = "-55%")
+ * Each row is colored by the HIGHEST rarity that contributed to it, so a
+ * celestial buff still pops even after being folded into a net number.
+ * Player-team buffs list first, then a divider, then enemy/boss debuffs.
+ */
+function drawAllyBuffTotals(ctx, gameState, playerId, canvasWidth) {
+  const others = (gameState.players || []).filter(p => p.id !== playerId);
+  if (others.length === 0) return;
+
+  // Group every teammate modifier by (team it applies to, stat it targets)
+  const groups = new Map(); // "team:target" -> aggregate
+  others.forEach(p => (p.attributes || []).forEach(attr => {
+    const m = attr.modifier;
+    if (!m || !m.target) return;
+    const groupKey = `${m.appliesToTeam}:${m.target}`;
+    let g = groups.get(groupKey);
+    if (!g) {
+      g = { team: m.appliesToTeam, target: m.target, sum: 0, product: 1, bestRank: -1, color: '#ffffff' };
+      groups.set(groupKey, g);
+    }
+    if (m.target === 'armor') g.sum += m.value;   // flat stat
+    else g.product *= m.value;                     // multiplicative stat
+    const rank = RARITY_ORDER.indexOf(attr.tier);
+    if (rank > g.bestRank) {
+      g.bestRank = rank;
+      g.color = attr.tierColor || '#ffffff';
+    }
+  }));
+  if (groups.size === 0) return; // teammates exist but have no buffs yet
+
+  // Format one aggregate as a "LABEL  value" row
+  const formatRow = (g) => {
+    const isDebuff = g.team !== 'players';
+    const stat = isDebuff ? (DEBUFF_STAT_LABELS[g.target] || g.target.toUpperCase())
+                          : (ALLY_STAT_LABELS[g.target] || g.target.toUpperCase());
+    const prefix = g.team === 'enemies' ? 'ENEMY ' : g.team === 'boss' ? 'BOSS ' : '';
+    let value;
+    if (g.target === 'armor') {
+      value = `${g.sum >= 0 ? '+' : '-'}${Math.round(Math.abs(g.sum))}`;
+    } else {
+      value = `${g.product >= 1 ? '+' : '-'}${Math.round(Math.abs(g.product - 1) * 100)}%`;
+    }
+    return { text: `${prefix}${stat}  ${value}`, color: g.color };
+  };
+
+  const buffRows = [];
+  const debuffRows = [];
+  groups.forEach(g => (g.team === 'players' ? buffRows : debuffRows).push(formatRow(g)));
+
+  ctx.save();
+  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.textAlign = 'right';
+  const rightX = canvasWidth - 10;
+  let y = 56; // below the kill counter / boss indicator (~y=30-45)
+
+  ctx.fillStyle = '#00ffff';
+  ctx.fillText(`ALLY BUFFS (${others.length})`, rightX, y);
+  y += 13;
+
+  buffRows.forEach(row => {
+    ctx.fillStyle = row.color;
+    ctx.fillText(row.text, rightX, y);
+    y += 11;
+  });
+
+  if (buffRows.length > 0 && debuffRows.length > 0) {
+    // Thin divider between team buffs and enemy/boss debuffs
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+    ctx.fillRect(rightX - 120, y - 7, 120, 1);
+    y += 4;
+  }
+
+  debuffRows.forEach(row => {
+    ctx.fillStyle = row.color;
+    ctx.fillText(row.text, rightX, y);
+    y += 11;
+  });
+
+  ctx.restore();
+}
+
 /**
  * Draw HUD overlay
  */
@@ -3753,18 +3982,24 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
     ctx.textAlign = 'left';
 
     let y = 20;
-    ctx.fillText('YOUR ATTRIBUTES:', 10, y);
+    ctx.fillText('YOUR BUFFS:', 10, y);
     y += 12;
 
-    // Color each entry by tier so rarity reads at a glance
+    // Color each entry by tier so rarity reads at a glance. Show the EFFECT
+    // (attr.description is pre-formatted by the server, e.g. "+80% team
+    // attack") + tier tag - playtesters couldn't remember what the flavor
+    // names actually did, so the names are dropped from the HUD.
     thisPlayer.attributes.forEach(attr => {
       ctx.fillStyle = attr.tierColor || '#ffff00';
-      // Show name + tiny tier tag, e.g. "• Synergize  [MYTHIC]"
+      // e.g. "• +80% team attack  [MYTHIC]"
       const tierTag = attr.tierLabel ? `  [${attr.tierLabel}]` : '';
-      ctx.fillText(`• ${attr.name}${tierTag}`, 15, y);
+      ctx.fillText(`• ${attr.description}${tierTag}`, 15, y);
       y += 11;
     });
   }
+
+  // Net totals of every OTHER player's buffs (top right, below kill counter)
+  drawAllyBuffTotals(ctx, gameState, playerId, canvasWidth);
 
   // Kill counter (top right - PROMINENT) - Show progress to boss
   if (gameState.debug) {

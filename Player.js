@@ -9,7 +9,7 @@ class Player extends Unit {
   constructor(socketId, name, color, characterAttributes = [], opts = {}) {
     // Base stats for players
     const playerBaseStats = {
-      maxHealth: 500,
+      maxHealth: 200,  // Reduced from 500 after playtest feedback - runs felt too forgiving
       attack: 20,        // Reduced from 100 - punch does 20 damage (5 hits to kill)
       attackSpeed: 1.2,
       armor: 25,
@@ -57,13 +57,16 @@ class Player extends Unit {
     return {
       ...baseState,
       // Include tier metadata so the HUD can color each entry by rarity.
+      // Also include the raw modifier so clients can aggregate teammates'
+      // buffs into net team totals (top-right "ALLY BUFFS" panel).
       attributes: this.attributes.map(attr => ({
         key: attr.key,
         name: attr.name,
         description: attr.description,
         tier: attr.tier,
         tierLabel: attr.tierLabel,
-        tierColor: attr.tierColor
+        tierColor: attr.tierColor,
+        modifier: attr.modifier
       }))
     };
   }

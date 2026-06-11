@@ -14,8 +14,8 @@ const debugLog = (...args) => { if (DEBUG) console.log(...args); };
 const BROADCAST_HZ = 30;
 
 // How long a downed mook's corpse lingers (broadcast for rendering only) so the
-// client can play its KO tilt before it's removed.
-const ENEMY_CORPSE_LINGER_MS = 800;
+// client can play its ~300ms flash-out death effect before it's removed.
+const ENEMY_CORPSE_LINGER_MS = 320;
 
 /**
  * GameRoom - Manages a single multiplayer game session
@@ -30,9 +30,9 @@ class GameRoom {
     this.players = new Map(); // socketId -> Player
     this.enemies = []; // Array of Enemy instances
     // Recently-downed mooks kept around briefly (ENEMY_CORPSE_LINGER_MS) so the
-    // client can play the KO tilt animation. They're excluded from `enemies`, so
-    // gameplay (combat/progression) never sees them - they only get broadcast
-    // for rendering.
+    // client can play the flash-out death effect. They're excluded from
+    // `enemies`, so gameplay (combat/progression) never sees them - they only
+    // get broadcast for rendering.
     this.corpses = [];
     this.boss = null; // Current boss (if in boss zone)
     this.status = 'waiting'; // waiting, playing, finished
@@ -425,8 +425,8 @@ class GameRoom {
 
     // Track kills and retire dead enemies. Each death is counted exactly once
     // (the tick it dies), then the mook is moved out of `this.enemies` into the
-    // short-lived `corpses` list so the client can play its KO tilt instead of
-    // it popping out of existence. Gameplay logic only ever sees `this.enemies`.
+    // short-lived `corpses` list so the client can play its flash-out instead
+    // of it popping out of existence. Gameplay logic only ever sees `this.enemies`.
     const deadEnemies = this.enemies.filter(enemy => enemy.isKnockedOut && enemy.health <= 0);
     deadEnemies.forEach(enemy => {
       this.totalKills++;
@@ -1288,7 +1288,7 @@ class GameRoom {
       roomName: this.name,
       status: this.status,
       players: Array.from(this.players.values()).map(p => p.getState()),
-      // Include lingering corpses so the client can render their KO animation.
+      // Include lingering corpses so the client can render their death flash-out.
       enemies: [...this.enemies, ...this.corpses].map(e => e.getState()),
       boss: this.boss ? this.boss.getState() : null,
       worldWidth: this.worldWidth,
