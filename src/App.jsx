@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
-import { loadBillSprites, getBillSprites, pickBillFrame, getSpriteVariant, setSpriteVariant } from './SpriteLoader';
+import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
 import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
 import { loadBossSprites, getBossSprites, pickBossFrame, loadBossDeathSprites, pickBossDeathFrame } from './BossSprites';
 
@@ -25,6 +25,18 @@ const HIT_FLASH_IMPACT_MS = 80;
 // "you got stunned" cue is clearly readable, not a 1/3-second blip. The
 // stars fade out over the back half of this window.
 const STUN_STARS_DURATION_MS = 700;
+
+// The bottom-left debug overlay (SPAWNED / ALIVE / SECTION / CLEAR / X POS) is
+// opt-in so it doesn't ship to players: add ?debug=1 to the URL or set
+// localStorage.debug = '1'. Read once at load.
+const SHOW_DEBUG_HUD = (() => {
+  try {
+    const p = new URLSearchParams(window.location.search);
+    return p.get('debug') === '1' || window.localStorage.getItem('debug') === '1';
+  } catch (_) {
+    return false;
+  }
+})();
 
 /**
  * Draw one filled 4-point sparkle star centered at (x,y) with the given
@@ -295,67 +307,6 @@ const AttributePickerModal = ({ choices, reason, stageName, luck, onPick }) => {
             }}>CLICK TO SELECT</div>
           </button>
         ))}
-      </div>
-    </div>
-  );
-};
-
-/**
- * SpriteVariantToggle - Tiny "A | B" pill in the bottom HUD that lets the
- * user flip between the two candidate Bill sprite sheets. Clicking the
- * inactive side switches the variant (writes localStorage and reloads).
- * Visible on both mobile and desktop. Lives in the bottom-right of the
- * footer so it doesn't fight the centered key hints for attention.
- */
-const SpriteVariantToggle = () => {
-  const active = getSpriteVariant();
-  const pillBase = {
-    fontFamily: '"Press Start 2P", monospace',
-    fontSize: 8,
-    padding: '4px 8px',
-    cursor: 'pointer',
-    userSelect: 'none',
-    WebkitUserSelect: 'none',
-    border: '1px solid #00ffff',
-    background: 'transparent',
-    color: '#00ffff'
-  };
-  const activeStyle = {
-    background: '#00ffff',
-    color: '#001020',
-    fontWeight: 'bold'
-  };
-  return (
-    <div style={{
-      position: 'absolute',
-      right: 14,
-      top: '50%',
-      transform: 'translateY(-50%)',
-      display: 'flex',
-      alignItems: 'center',
-      gap: 6
-    }}>
-      <span style={{ fontSize: 8, color: '#888' }}>SPRITE</span>
-      <div style={{ display: 'flex' }}>
-        <button
-          onClick={() => active !== 'A' && setSpriteVariant('A')}
-          style={{
-            ...pillBase,
-            borderTopLeftRadius: 4,
-            borderBottomLeftRadius: 4,
-            borderRight: 'none',
-            ...(active === 'A' ? activeStyle : {})
-          }}
-        >A</button>
-        <button
-          onClick={() => active !== 'B' && setSpriteVariant('B')}
-          style={{
-            ...pillBase,
-            borderTopRightRadius: 4,
-            borderBottomRightRadius: 4,
-            ...(active === 'B' ? activeStyle : {})
-          }}
-        >B</button>
       </div>
     </div>
   );
@@ -1281,6 +1232,13 @@ const BeatEmUpGame = () => {
 
     newSocket.on('playerJoined', ({ player }) => {
       console.log('Player joined:', player.name);
+    });
+
+    // Fired when a player's stats change mid-run (e.g. picking an attribute).
+    // The HUD reads attributes from the gameState broadcast, so this is just a
+    // nudge/log - it no longer masquerades as a join.
+    newSocket.on('playerUpdated', ({ player }) => {
+      console.log('Player updated:', player.name);
     });
 
     newSocket.on('playerLeft', ({ playerId: pid }) => {
@@ -2279,7 +2237,6 @@ const BeatEmUpGame = () => {
             {isMobile && (
               <span>TOUCH CONTROLS BELOW</span>
             )}
-            <SpriteVariantToggle />
           </div>
         </div>
       )}
@@ -3837,16 +3794,18 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
       }
     }
 
-    // Section/spawn info
-    ctx.fillStyle = '#ffff00';
-    ctx.font = '8px "Press Start 2P", monospace';
-    ctx.textAlign = 'left';
-    let debugY = ctx.canvas.height - 72;
-    ctx.fillText(`SPAWNED: ${gameState.debug.enemiesSpawned}`, 10, debugY);
-    ctx.fillText(`ALIVE: ${gameState.debug.enemyCount}`, 10, debugY + 12);
-    ctx.fillText(`SECTION: ${gameState.debug.currentSectionIndex}`, 10, debugY + 24);
-    ctx.fillText(`CLEAR: ${gameState.debug.sectionClear ? 'YES' : 'NO'}`, 10, debugY + 36);
-    ctx.fillText(`X POS: ${Math.floor(gameState.debug.playerX)}/${gameState.debug.maxX}`, 10, debugY + 48);
+    // Section/spawn info - dev-only overlay (opt in with ?debug=1)
+    if (SHOW_DEBUG_HUD) {
+      ctx.fillStyle = '#ffff00';
+      ctx.font = '8px "Press Start 2P", monospace';
+      ctx.textAlign = 'left';
+      let debugY = ctx.canvas.height - 72;
+      ctx.fillText(`SPAWNED: ${gameState.debug.enemiesSpawned}`, 10, debugY);
+      ctx.fillText(`ALIVE: ${gameState.debug.enemyCount}`, 10, debugY + 12);
+      ctx.fillText(`SECTION: ${gameState.debug.currentSectionIndex}`, 10, debugY + 24);
+      ctx.fillText(`CLEAR: ${gameState.debug.sectionClear ? 'YES' : 'NO'}`, 10, debugY + 36);
+      ctx.fillText(`X POS: ${Math.floor(gameState.debug.playerX)}/${gameState.debug.maxX}`, 10, debugY + 48);
+    }
   }
 }
 
