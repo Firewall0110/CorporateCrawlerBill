@@ -40,7 +40,12 @@ const FIRST_FRAME_COL = 1; // skip the label column entirely
 const ANIM = {
   WALK:    { rowIndex: 0, frameCount: 7 },
   PUNCH:   { rowIndex: 1, frameCount: 7 },
-  KICK:    { rowIndex: 2, frameCount: 7 },
+  // footAnchor: anchor the kick horizontally by the PLANTED FOOT, not the
+  // cell-center column. The kick art draws the character at wildly varying
+  // x-offsets per frame (the torso drifts ~90px across the row); cell-center
+  // anchoring faithfully reproduced that as the body "sliding backwards" mid
+  // kick. Anchoring to the foot makes the body pivot around a planted foot.
+  KICK:    { rowIndex: 2, frameCount: 7, footAnchor: true },
   JUMP:    { rowIndex: 3, frameCount: 7 },
   KO:      { rowIndex: 4, frameCount: 7 },
   SPECIAL: { rowIndex: 5, frameCount: 7 }
@@ -216,7 +221,7 @@ function processSheet(img) {
 // blob seeded from within the focal cell.
 const FRAME_MARGIN_FRAC = 0.5;
 
-function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
+function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH, footAnchor = false) {
   try {
     const sheetW = sheet.width;
     const marginX = Math.floor(cellW * FRAME_MARGIN_FRAC);
@@ -319,10 +324,24 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
     outCtx.putImageData(outData, 0, 0);
 
     // Anchors:
-    //   anchorX = cell-center column within the bbox - keeps the body's
-    //     cell-relative position stable across frames while limbs extend.
+    //   anchorX (default) = cell-center column within the bbox - keeps the
+    //     body's cell-relative position stable across frames while limbs extend.
+    //   anchorX (footAnchor) = horizontal center of the PLANTED FOOT (mean x of
+    //     the bottom ~12% of the component's rows). Used for the kick, whose art
+    //     drifts the whole body per frame; planting the foot stops the slide.
     //   anchorY = body's feet within the bbox (cell bottom).
-    const anchorX = seedX - minX;
+    let refX = seedX;
+    if (footAnchor) {
+      const footTop = best.maxY - Math.floor(bboxH * 0.12);
+      let fx = 0, fn = 0;
+      for (let y = footTop; y <= best.maxY; y++) {
+        for (let x = minX; x <= best.maxX; x++) {
+          if (label[y * srcW + x] === best.id) { fx += x; fn++; }
+        }
+      }
+      if (fn > 0) refX = Math.round(fx / fn);
+    }
+    const anchorX = refX - minX;
     const anchorY = (cellH - 1) - minY + 1;
     return {
       canvas: outCanvas,
@@ -397,7 +416,7 @@ function sliceAnimations(processed, raw) {
       // un-chroma-keyed sheet so we ALWAYS produce a visible sprite -
       // worst case the cell has magenta bg visible but the character is
       // legible. A degraded sprite beats no sprite (purple block fallback).
-      let frame = cropFrameWithSeed(processed, cellX, cellY, cellW, cellH);
+      let frame = cropFrameWithSeed(processed, cellX, cellY, cellW, cellH, anim.footAnchor === true);
       if (!frame) {
         frame = simpleCellCrop(processed, cellX, cellY, cellW, cellH);
       }
