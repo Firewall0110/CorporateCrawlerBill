@@ -8,6 +8,11 @@ const Leaderboard = require('./db/Leaderboard');
 const DEBUG = process.env.DEBUG === 'true';
 const debugLog = (...args) => { if (DEBUG) console.log(...args); };
 
+// Network broadcast rate. The simulation still runs at the full tick rate
+// (60Hz); we just send snapshots less often to cut per-client serialization +
+// bandwidth. The client renders the latest snapshot every animation frame.
+const BROADCAST_HZ = 30;
+
 /**
  * GameRoom - Manages a single multiplayer game session
  * Handles players, enemies, level progression, stat management
@@ -283,9 +288,15 @@ class GameRoom {
    * Start the game loop
    */
   startGameLoop() {
+    // Update every tick (60Hz) but only broadcast every Nth tick (~BROADCAST_HZ).
+    const broadcastEvery = Math.max(1, Math.round((1000 / BROADCAST_HZ) / this.tickRate));
+    let tick = 0;
     this.gameLoop = setInterval(() => {
       this.update();
-      this.broadcastState();
+      if (++tick >= broadcastEvery) {
+        tick = 0;
+        this.broadcastState();
+      }
     }, this.tickRate);
   }
 
@@ -1206,17 +1217,22 @@ class GameRoom {
    * Calculate total enemies across all non-boss sections (used for HUD kill target)
    */
   getTotalEnemyCount() {
-    let total = 0;
-    this.zoneConfig.forEach(zone => {
-      if (!zone.sections) return;
-      zone.sections.forEach(section => {
-        if (section.isBoss) return;
-        (section.waves || []).forEach(wave => {
-          total += wave.count || 0;
+    // zoneConfig is fixed for the room's lifetime, so compute once and memoize
+    // (this used to run nested loops over the whole config on every broadcast).
+    if (this._totalEnemyCount == null) {
+      let total = 0;
+      this.zoneConfig.forEach(zone => {
+        if (!zone.sections) return;
+        zone.sections.forEach(section => {
+          if (section.isBoss) return;
+          (section.waves || []).forEach(wave => {
+            total += wave.count || 0;
+          });
         });
       });
-    });
-    return total;
+      this._totalEnemyCount = total;
+    }
+    return this._totalEnemyCount;
   }
 
   /**
@@ -1224,7 +1240,6 @@ class GameRoom {
    */
   getState() {
     const zone = this.zoneConfig[this.currentZoneIndex];
-    const currentSection = zone?.sections?.[this.currentSectionIndex];
 
     return {
       roomId: this.id,
@@ -1239,11 +1254,12 @@ class GameRoom {
       playAreaTop: this.playAreaTop, // Back of play area (depth)
       playAreaBottom: this.groundLevel, // Front of play area
       totalEnemyTarget: this.getTotalEnemyCount(), // For HUD progress display
-      currentZone: zone,
+      // NOTE: the full `currentZone`/`currentSection` config objects used to be
+      // serialized here every tick. The client only needs the stage name, so we
+      // send just `currentStageName` and drop the heavy static config.
       currentZoneIndex: this.currentZoneIndex,
       currentStageIndex: this.currentZoneIndex, // alias for clarity
       currentStageName: zone?.name,
-      currentSection: currentSection,
       currentSectionIndex: this.currentSectionIndex,
       zoneCount: this.zoneConfig.length,
       stageTransition: this.stageTransition ? {

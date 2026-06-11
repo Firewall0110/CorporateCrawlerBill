@@ -1084,7 +1084,10 @@ const BeatEmUpGame = () => {
   const [gameState, setGameState] = useState(null);
   const [availableRooms, setAvailableRooms] = useState([]);
   const [error, setError] = useState('');
-  const [cameraX, setCameraX] = useState(0);
+  // Camera follows the local player. Kept in a ref (not state) and recomputed
+  // inside the render loop each frame, so camera motion never triggers a React
+  // re-render and stays smooth at full frame rate.
+  const cameraXRef = useRef(0);
   const [levelWon, setLevelWon] = useState(false);
   // Stage transition state: { fromName, toName, until } shown as overlay
   const [stageTransition, setStageTransition] = useState(null);
@@ -1118,6 +1121,8 @@ const BeatEmUpGame = () => {
   // update) can read the latest effectiveStats.attackSpeed for cooldown
   // scaling without going stale.
   const gameStateRef = useRef(null);
+  // Timestamp of the last time we pushed gameState into React state (throttle).
+  const lastUiSyncRef = useRef(0);
 
   // Visual effects refs (mutable, don't trigger re-renders)
   const damageNumbersRef = useRef([]); // {id, x, y, value, color, spawnTime, vy}
@@ -1231,16 +1236,22 @@ const BeatEmUpGame = () => {
     });
 
     newSocket.on('gameState', (state) => {
-      setGameState(state);
-      // Debug logging
-      if (state.debug && (state.debug.enemyCount > 0 || state.debug.currentWaveIndex > 0)) {
-        console.log(`[GameState] Enemies: ${state.debug.enemyCount}, Wave: ${state.debug.currentWaveIndex}, Zone: ${state.currentZoneIndex}`);
+      // The render loop reads gameStateRef every frame, so update it at the full
+      // broadcast rate. React state, by contrast, only drives a little JSX (zone
+      // name / player count / death overlay), so throttle setGameState to ~10Hz
+      // to avoid reconciling the whole tree 60x/s. (Was also logging every frame.)
+      gameStateRef.current = state;
+      const now = Date.now();
+      if (now - lastUiSyncRef.current >= 100) {
+        lastUiSyncRef.current = now;
+        setGameState(state);
       }
     });
 
     newSocket.on('roomCreated', ({ roomId: id, playerId: pid, gameState: gs, lifetimeTickets: lt }) => {
       setRoomId(id);
       setPlayerId(pid);
+      gameStateRef.current = gs;
       setGameState(gs);
       setLevelWon(false);
       setShowLeaderboard(false);
@@ -1252,6 +1263,7 @@ const BeatEmUpGame = () => {
     newSocket.on('roomJoined', ({ roomId: id, playerId: pid, gameState: gs, lifetimeTickets: lt }) => {
       setRoomId(id);
       setPlayerId(pid);
+      gameStateRef.current = gs;
       setGameState(gs);
       setLevelWon(false);
       setShowLeaderboard(false);
@@ -1396,7 +1408,7 @@ const BeatEmUpGame = () => {
         kick: { start: 0, end: 0 },
         special: { start: 0, end: 0 }
       };
-      setCameraX(0);
+      cameraXRef.current = 0;
     });
 
     newSocket.on('error', ({ message }) => {
@@ -1498,29 +1510,12 @@ const BeatEmUpGame = () => {
     return () => clearInterval(inputInterval);
   }, [socket, screen, roomId, playerId]);
 
-  // Keep gameStateRef in sync with gameState so the input setInterval can
-  // read the latest effectiveStats.attackSpeed without going stale.
+  // Canvas rendering. The loop reads gameStateRef every frame (kept current at
+  // the full broadcast rate) and computes the camera locally, so it starts ONCE
+  // when entering the game rather than tearing down and re-creating the rAF loop
+  // on every state/camera change.
   useEffect(() => {
-    gameStateRef.current = gameState;
-  }, [gameState]);
-
-  // Update camera position
-  useEffect(() => {
-    if (!gameState || !gameState.players.length) return;
-
-    // Find this player
-    const thisPlayer = gameState.players.find(p => p.id === playerId);
-    if (!thisPlayer) return;
-
-    // Follow player, keeping them centered-ish in viewport
-    const targetCameraX = thisPlayer.x - CANVAS_WIDTH / 3;
-    const clampedCameraX = Math.max(0, Math.min(targetCameraX, gameState.worldWidth - CANVAS_WIDTH));
-    setCameraX(clampedCameraX);
-  }, [gameState, playerId]);
-
-  // Canvas rendering
-  useEffect(() => {
-    if (screen !== 'game' || !gameState) return;
+    if (screen !== 'game') return;
 
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1528,6 +1523,21 @@ const BeatEmUpGame = () => {
     const ctx = canvas.getContext('2d');
 
     const render = () => {
+      const gameState = gameStateRef.current;
+      if (!gameState || !gameState.players) {
+        animationFrameRef.current = requestAnimationFrame(render);
+        return;
+      }
+
+      // Follow the local player, keeping them centered-ish; clamp to the world.
+      let cameraX = cameraXRef.current;
+      const thisPlayer = gameState.players.find(p => p.id === playerId);
+      if (thisPlayer) {
+        const targetCameraX = thisPlayer.x - CANVAS_WIDTH / 3;
+        cameraX = Math.max(0, Math.min(targetCameraX, gameState.worldWidth - CANVAS_WIDTH));
+        cameraXRef.current = cameraX;
+      }
+
       const now = Date.now();
 
       // Calculate screen shake offset
@@ -1651,7 +1661,7 @@ const BeatEmUpGame = () => {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [gameState, screen, playerId, cameraX]);
+  }, [screen, playerId]);
 
   // Fetch available rooms
   // FIXED: endpoint is /api/rooms - the wildcard route catches anything else
@@ -1701,7 +1711,7 @@ const BeatEmUpGame = () => {
     setGameState(null);
     setRoomId('');
     setPlayerId('');
-    setCameraX(0);
+    cameraXRef.current = 0;
     setStageTransition(null);
     // Clear visual effects refs
     damageNumbersRef.current = [];
@@ -2048,7 +2058,7 @@ const BeatEmUpGame = () => {
           }}>
             <div>
               <span style={{ color: '#00ffff', marginRight: '20px' }}>
-                ZONE: {gameState.currentZone?.name || 'Unknown'}
+                ZONE: {gameState.currentStageName || 'Unknown'}
               </span>
             </div>
             <div style={{ color: '#ff00ff' }}>
