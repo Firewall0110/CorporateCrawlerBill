@@ -4035,7 +4035,7 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
   if (bossActive) {
     ctx.fillText(`BOSS FIGHT!`, canvasWidth - 10, 30);
   } else {
-    ctx.fillText(`KILLS: ${totalKills}/${targetKills}`, canvasWidth - 10, 30);
+    ctx.fillText(`TICKETS CLOSED: ${totalKills}/${targetKills}`, canvasWidth - 10, 30);
   }
 
   // Show progress text
