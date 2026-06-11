@@ -3,6 +3,15 @@
  * Handles base stats, effective stats computation, and modifier management
  */
 
+// BALANCE KNOB: hard ceiling on effective armor for EVERY unit (players,
+// enemies, bosses). Armor is a direct % damage reduction in takeDamage()
+// (damage * (1 - armor/100)), so 100 armor = total immunity. Flat armor
+// picks stack additively across the team (base 25 + picks), meaning one
+// celestial armor pick (110) or two mid-tier picks used to hit the immunity
+// floor. 80 = a 20%-damage-taken floor: tanky, never invincible. Dial here
+// during playtest.
+const MAX_EFFECTIVE_ARMOR = 80;
+
 class Unit {
   constructor(id, name, baseStats, position = { x: 0, y: 0 }) {
     this.id = id;
@@ -120,6 +129,11 @@ class Unit {
     // float drift in the HUD (e.g. "220/220.00000000000003" on the overhead
     // HP bar). Base stats are untouched - only the effective value rounds.
     this.effectiveStats.maxHealth = Math.round(this.effectiveStats.maxHealth);
+
+    // Clamp armor AFTER all modifiers so stacked flat-armor picks can't
+    // reach the 100-armor immunity floor (see MAX_EFFECTIVE_ARMOR above).
+    // Applies to all units, keeping enemy/boss armor sane too.
+    this.effectiveStats.armor = Math.min(MAX_EFFECTIVE_ARMOR, this.effectiveStats.armor || 0);
 
     // Sync health to new maxHealth (cap if needed)
     this.maxHealth = this.effectiveStats.maxHealth;

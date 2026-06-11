@@ -397,19 +397,29 @@ function getGlobalStats() {
   return { totalTickets, totalBosses, totalCrawls, playersCompleted };
 }
 
+// BALANCE KNOBS for the luck curve. Celestial chance is roughly (1+luck)%
+// because rollTier() subtracts luck from a 1-100 roll, so these two numbers
+// directly set how fast veterans drift toward celestial picks. Dial during
+// playtest.
+const LUCK_CAP = 25;          // Hard ceiling: ~26% celestial, never guaranteed
+const TICKETS_PER_LUCK = 40;  // Lifetime tickets needed per +1 luck
+
 /**
  * Convert a player's lifetime tickets into a luck score that's subtracted
  * from each 1-100 attribute-tier roll. See CharacterAttributes.rollTier()
  * for how the roll maps to tiers.
  *
- * Curve: 1 luck per 10 tickets killed, capped at 99. At 990 tickets,
- * EVERY roll resolves to celestial because (max roll 100) - 99 = 1.
+ * Curve: 1 luck per TICKETS_PER_LUCK (40) tickets killed, capped at
+ * LUCK_CAP (25). So 500 lifetime tickets -> luck 12 (~13% celestial),
+ * 1000+ tickets -> luck 25 (~26% celestial, the cap).
  *
- * Why cap at 99 not 100: with luck=99, even a max roll of 100 yields
- * adjusted_roll = 1 = celestial. luck=100 would be redundant.
+ * The old curve (1 luck per 10 tickets, cap 99) made veteran lobbies
+ * perma-celestial: 990 tickets meant EVERY roll resolved to celestial
+ * because (max roll 100) - 99 = 1. Capping well below 99 keeps the rarest
+ * tier rare even for the most grizzled ticket-slayers.
  */
 function computeLuck(ticketsKilled) {
-  return Math.min(99, Math.max(0, Math.floor(ticketsKilled / 10)));
+  return Math.min(LUCK_CAP, Math.max(0, Math.floor(ticketsKilled / TICKETS_PER_LUCK)));
 }
 
 // EAGER INIT at module load. Previously init() was lazy (deferred to the

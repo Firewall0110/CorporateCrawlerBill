@@ -331,14 +331,14 @@ const ATTRIBUTES = {
  *      36-60 = uncommon, 61-100 = common.
  *
  * Luck curve (set by Leaderboard.computeLuck):
- *   luck = min(99, floor(ticketsLifetime / 10))
- *   - 0 tickets  -> luck 0  -> base 1% celestial
- *   - 100 tickets -> luck 10 -> 11% celestial chance
- *   - 500 tickets -> luck 50 -> 51% celestial
- *   - 990 tickets -> luck 99 -> 100% celestial (the cap)
+ *   luck = min(25, floor(ticketsLifetime / 40))
+ *   - 0 tickets    -> luck 0  -> base 1% celestial
+ *   - 200 tickets  -> luck 5  -> 6% celestial chance
+ *   - 500 tickets  -> luck 12 -> 13% celestial
+ *   - 1000 tickets -> luck 25 -> 26% celestial (the cap)
  *
  * Edge cases:
- *   - luck 99 + max roll 100 = 1 (always celestial).
+ *   - luck is capped at 25 by computeLuck, so celestial is never guaranteed.
  *   - luck 0 + any roll matches the base distribution exactly.
  */
 const RARITIES_RAREST_FIRST = ['celestial', 'mythic', 'legendary', 'epic', 'rare', 'uncommon', 'common'];

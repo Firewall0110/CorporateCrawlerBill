@@ -79,7 +79,11 @@ class GameRoom {
     // Boss base max-health before per-player scaling and attribute modifiers.
     // Single source of truth for spawnBoss() and rescaleBossHealth(), which
     // previously disagreed (420 vs a stale 300).
-    this.BOSS_BASE_HEALTH = 420;
+    // BALANCE KNOB: tuned 420 -> 650 after players moved to 200 base HP —
+    // at 420 the boss died in ~7-10s solo (slow telegraphs, no melee),
+    // making it the easiest part of the run. Per-player scaling via
+    // computeBossBaseHealth() still applies on top of this value.
+    this.BOSS_BASE_HEALTH = 650;
 
     // Track which sections have already been spawned (prevents respawn on backtracking)
     // Key format: "zoneIndex-sectionIndex"
