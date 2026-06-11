@@ -94,9 +94,11 @@ class GameRoom {
     this.totalKills = 0;
     this.enemiesSpawned = 0;
 
-    // Player death tracking
-    this.playerDeadTime = null;
-    this.playerDeadSocketId = null;
+    // Player death tracking - PER PLAYER. socketIds we've already fired
+    // 'playerDied' for (cleared on respawn/revive). The old single-slot
+    // playerDeadSocketId could only track ONE dead player, so a second
+    // simultaneous co-op death never got its Game Over UI.
+    this.deathEmitted = new Set();
 
     // Auto-start timer (game starts 3 seconds after room creation)
     this.autoStartTimer = setTimeout(() => {
@@ -317,6 +319,21 @@ class GameRoom {
       clearInterval(this.gameLoop);
       this.gameLoop = null;
     }
+    // Clear every pending one-shot timer too - otherwise a deleted room's
+    // callbacks (auto-start, stage swap, loop shutdown) fire later against a
+    // dead room and keep it reachable from the event loop.
+    if (this.autoStartTimer) {
+      clearTimeout(this.autoStartTimer);
+      this.autoStartTimer = null;
+    }
+    if (this.stageTransitionTimer) {
+      clearTimeout(this.stageTransitionTimer);
+      this.stageTransitionTimer = null;
+    }
+    if (this.levelCompleteTimer) {
+      clearTimeout(this.levelCompleteTimer);
+      this.levelCompleteTimer = null;
+    }
   }
 
   /**
@@ -448,22 +465,22 @@ class GameRoom {
     }
 
     // Centralized player death detection - catches deaths from ALL sources
-    // (regular combat, boss attacks, etc.) Only triggers once until respawn
-    if (!this.playerDeadSocketId) {
-      for (const [socketId, player] of this.players.entries()) {
-        if (player.health <= 0 && !player.isKnockedOut) {
-          player.isKnockedOut = true;
-          player.health = 0;
-        }
-        if (player.health <= 0 && player.isKnockedOut) {
-          this.playerDeadTime = Date.now();
-          this.playerDeadSocketId = socketId;
-          debugLog(`[GameOver] Player ${socketId} died!`);
-          this.io.to(this.id).emit('playerDied', {
-            playerId: socketId
-          });
-          break;
-        }
+    // (regular combat, boss attacks, etc.) Checked per-player every tick so
+    // multiple simultaneous co-op deaths each get their own 'playerDied'.
+    // Unit.takeDamage already flips isKnockedOut on lethal damage, so the
+    // deathEmitted Set (not the isKnockedOut flag) is what dedupes the emit -
+    // it's cleared on respawn / stage-transition revive.
+    for (const [socketId, player] of this.players.entries()) {
+      if (player.health <= 0 && !player.isKnockedOut) {
+        player.isKnockedOut = true;
+        player.health = 0;
+      }
+      if (player.health <= 0 && player.isKnockedOut && !this.deathEmitted.has(socketId)) {
+        this.deathEmitted.add(socketId);
+        debugLog(`[GameOver] Player ${socketId} died!`);
+        this.io.to(this.id).emit('playerDied', {
+          playerId: socketId
+        });
       }
     }
 
@@ -495,7 +512,15 @@ class GameRoom {
     const zone = this.zoneConfig[this.currentZoneIndex];
     if (!zone || !zone.sections) return null;
 
-    const playerX = Array.from(this.players.values())[0]?.x || 0;
+    // Progression follows the FURTHEST-ALONG living player, not whoever
+    // happens to be first in the Map (the host). Otherwise the host idling
+    // at x=0 - or lying dead there - freezes wave spawns for teammates.
+    // If everyone is down, fall back to the furthest player regardless.
+    const allPlayers = Array.from(this.players.values());
+    if (allPlayers.length === 0) return null;
+    const alive = allPlayers.filter(p => !p.isKnockedOut);
+    const tracked = alive.length > 0 ? alive : allPlayers;
+    const playerX = Math.max(...tracked.map(p => p.x || 0));
 
     for (let i = 0; i < zone.sections.length; i++) {
       const section = zone.sections[i];
@@ -631,8 +656,8 @@ class GameRoom {
       duration: this.STAGE_TRANSITION_DURATION
     });
 
-    // Schedule the actual stage swap
-    setTimeout(() => this.finishStageTransition(), this.STAGE_TRANSITION_DURATION);
+    // Schedule the actual stage swap (handle stored so stop() can cancel it)
+    this.stageTransitionTimer = setTimeout(() => this.finishStageTransition(), this.STAGE_TRANSITION_DURATION);
   }
 
   /**
@@ -641,6 +666,7 @@ class GameRoom {
    * fires stageStarted event.
    */
   finishStageTransition() {
+    this.stageTransitionTimer = null; // one-shot - it just fired (or was bypassed)
     if (!this.stageTransition) return;
 
     const nextIdx = this.stageTransition.nextStageIndex;
@@ -672,6 +698,8 @@ class GameRoom {
       player.isKnockedOut = false;
       player.health = player.maxHealth;
     });
+    // Everyone was just revived above, so future deaths must re-emit.
+    this.deathEmitted.clear();
 
     // Clear any enemies / boss carried over (defensive)
     this.enemies = [];
@@ -836,6 +864,10 @@ class GameRoom {
       if (!attacker.isAttacking || attacker.hasHit) return;
 
       players.forEach(target => {
+        // Downed players are out of the fight - don't pummel the corpse
+        // (it spams damage numbers and drives health further negative).
+        if (target.isKnockedOut) return;
+
         const distance = Math.abs(attacker.x - target.x);
         const verticalDistance = Math.abs(attacker.y - target.y);
 
@@ -938,7 +970,8 @@ class GameRoom {
 
     // Stop the game loop after a brief grace period to avoid spamming
     // gameState broadcasts to clients that already moved on to victory screen.
-    setTimeout(() => {
+    // (Handle stored so stop() can cancel it if the room dies first.)
+    this.levelCompleteTimer = setTimeout(() => {
       if (this.gameLoop) {
         clearInterval(this.gameLoop);
         this.gameLoop = null;
@@ -1114,6 +1147,9 @@ class GameRoom {
   removePlayer(socketId) {
     const player = this.players.get(socketId);
     this.players.delete(socketId);
+    // Drop any death bookkeeping for the leaver so a dead player leaving
+    // can't wedge the room's death state.
+    this.deathEmitted.delete(socketId);
 
     if (player) {
       // Submit whatever session progress they had before they vanished. The
@@ -1216,6 +1252,12 @@ class GameRoom {
    */
   handlePlayerAttack(socketId, attackType) {
     if (this.stageTransition || this.bossDeathStartTime) return;
+    // Whitelist the client-supplied attack type. An unknown type would set
+    // isAttacking but fall through performAttack's switch without setting any
+    // cooldown, letting a hacked client rapid-fire attacks.
+    if (!['punch', 'kick', 'special'].includes(attackType)) {
+      attackType = 'punch';
+    }
     const player = this.players.get(socketId);
     if (player) {
       player.performAttack(attackType);
@@ -1241,12 +1283,9 @@ class GameRoom {
       player.velocityX = 0;
       player.velocityY = 0;
 
-      // Clear the room's death state only if THIS socket is the one that
-      // triggered it, so respawning never clears a different player's overlay.
-      if (this.playerDeadSocketId === socketId) {
-        this.playerDeadTime = null;
-        this.playerDeadSocketId = null;
-      }
+      // Re-arm death detection for this player only - other downed players
+      // keep their own entries (and overlays) untouched.
+      this.deathEmitted.delete(socketId);
 
       debugLog(`[Respawn] Player ${socketId} continued!`);
       this.io.to(this.id).emit('playerRespawned', {
@@ -1317,19 +1356,24 @@ class GameRoom {
       } : null,
       maxRightBound: this.maxRightBound,
       sectionClear: this.sectionWavesClear,
-      playerDead: this.playerDeadSocketId ? true : false,
-      deadPlayerId: this.playerDeadSocketId,
-      // Debug info
-      debug: {
-        playerCount: this.players.size,
-        enemyCount: this.enemies.length,
-        totalKills: this.totalKills,
-        enemiesSpawned: this.enemiesSpawned,
-        currentSectionIndex: this.currentSectionIndex,
-        sectionClear: this.sectionWavesClear,
-        maxX: this.maxRightBound,
-        playerX: Array.from(this.players.values())[0]?.x || 0
-      }
+      // NOTE: per-player death is broadcast via each player's isKnockedOut
+      // flag (in players[].getState()) - the old room-wide playerDead /
+      // deadPlayerId single-slot fields are gone.
+      totalKills: this.totalKills, // HUD kill counter (top-level, not debug)
+      // Debug info - only serialized when DEBUG is on, so prod broadcasts
+      // don't ship dev-only fields (playerX etc.) at 30Hz.
+      ...(DEBUG ? {
+        debug: {
+          playerCount: this.players.size,
+          enemyCount: this.enemies.length,
+          totalKills: this.totalKills,
+          enemiesSpawned: this.enemiesSpawned,
+          currentSectionIndex: this.currentSectionIndex,
+          sectionClear: this.sectionWavesClear,
+          maxX: this.maxRightBound,
+          playerX: Array.from(this.players.values())[0]?.x || 0
+        }
+      } : {})
     };
   }
 

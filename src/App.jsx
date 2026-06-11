@@ -9,8 +9,11 @@ import { loadBossSprites, getBossSprites, pickBossFrame, loadBossDeathSprites, p
 const SERVER_URL = window.location.origin;
 
 // Client-side attack cooldown durations (ms) for mobile button visuals.
-// Must roughly match server-side Unit.attackCooldown for each attackType.
-const COOLDOWN_MS = { punch: 300, kick: 600, special: 5000 };
+// Must match server-side Unit.attackCooldown at BASELINE attackSpeed (1.2):
+//   (0.5 / 1.2) * 0.6 = 250 ms punch, (0.5 / 1.2) * 1.2 = 500 ms kick.
+// (Was 300/600, which throttled honest players ~20% tighter than the server
+// actually allows.) Special is a fixed 5 s on the server, unscaled.
+const COOLDOWN_MS = { punch: 250, kick: 500, special: 5000 };
 
 // Hit-feedback durations (ms).
 // HIT_FLASH_DURATION_MS - total stun-visual window. Roughly matches the
@@ -1728,6 +1731,13 @@ const BeatEmUpGame = () => {
   // Reset all room/game state and return to the menu screen.
   // Used by both victory screen and game-over flows so a new game starts clean.
   const resetToMenu = () => {
+    // Tell the server we're leaving so it can free our slot (and delete the
+    // room if we were the last player). Without this, returning to the menu
+    // left the socket parked in the room forever - zombie rooms piled up
+    // until the server's per-socket room cap blocked new games.
+    if (socket?.connected) {
+      socket.emit('leaveRoom');
+    }
     setLevelWon(false);
     setGameState(null);
     setRoomId('');
@@ -1785,6 +1795,12 @@ const BeatEmUpGame = () => {
       playerData: { name: playerName, color }
     });
   };
+
+  // The LOCAL player's latest broadcast state. Drives the Game Over overlay:
+  // each downed player independently keys off their own isKnockedOut flag
+  // (the old room-wide playerDead/deadPlayerId fields could only ever track
+  // ONE death at a time, so a second simultaneous co-op death got no UI).
+  const me = gameState?.players?.find(p => p.id === playerId);
 
   return (
     <div style={{
@@ -2187,9 +2203,12 @@ const BeatEmUpGame = () => {
               </div>
             )}
 
-            {/* Game Over Screen - only the player who actually died sees this;
-                co-op teammates keep playing instead of all getting blocked. */}
-            {gameState?.playerDead && gameState?.deadPlayerId === playerId && !levelWon && (
+            {/* Game Over Screen - keyed off the LOCAL player's own
+                isKnockedOut flag, so every downed player sees it (not just
+                the first), teammates keep playing, and it auto-clears on
+                both respawn and stage-transition revive (each sets
+                isKnockedOut=false server-side). */}
+            {me?.isKnockedOut && !levelWon && (
               <div style={{
                 position: 'absolute',
                 top: 0,
@@ -4001,46 +4020,50 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
   // Net totals of every OTHER player's buffs (top right, below kill counter)
   drawAllyBuffTotals(ctx, gameState, playerId, canvasWidth);
 
-  // Kill counter (top right - PROMINENT) - Show progress to boss
-  if (gameState.debug) {
-    const targetKills = gameState.totalEnemyTarget || 18; // From server config
-    const killsRemaining = Math.max(0, targetKills - gameState.debug.totalKills);
-    const bossActive = !!gameState.boss;
-    ctx.fillStyle = bossActive ? '#ff00ff' : (killsRemaining === 0 ? '#00ff00' : '#ff3333');
-    ctx.font = 'bold 16px "Press Start 2P", monospace';
-    ctx.textAlign = 'right';
+  // Kill counter (top right - PROMINENT) - Show progress to boss.
+  // Reads the top-level gameState.totalKills field - the server's `debug`
+  // block is dev-only (omitted in prod broadcasts), so the HUD must never
+  // depend on it.
+  const targetKills = gameState.totalEnemyTarget || 18; // From server config
+  const totalKills = gameState.totalKills || 0;
+  const killsRemaining = Math.max(0, targetKills - totalKills);
+  const bossActive = !!gameState.boss;
+  ctx.fillStyle = bossActive ? '#ff00ff' : (killsRemaining === 0 ? '#00ff00' : '#ff3333');
+  ctx.font = 'bold 16px "Press Start 2P", monospace';
+  ctx.textAlign = 'right';
 
-    if (bossActive) {
-      ctx.fillText(`BOSS FIGHT!`, canvasWidth - 10, 30);
-    } else {
-      ctx.fillText(`KILLS: ${gameState.debug.totalKills}/${targetKills}`, canvasWidth - 10, 30);
-    }
+  if (bossActive) {
+    ctx.fillText(`BOSS FIGHT!`, canvasWidth - 10, 30);
+  } else {
+    ctx.fillText(`KILLS: ${totalKills}/${targetKills}`, canvasWidth - 10, 30);
+  }
 
-    // Show progress text
-    if (!bossActive) {
-      if (killsRemaining > 0) {
-        ctx.fillStyle = '#ffff00';
-        ctx.font = 'bold 10px "Press Start 2P", monospace';
-        ctx.fillText(`${killsRemaining} to boss`, canvasWidth - 10, 45);
-      } else {
-        ctx.fillStyle = '#00ff00';
-        ctx.font = 'bold 10px "Press Start 2P", monospace';
-        ctx.fillText(`BOSS UNLOCKED!`, canvasWidth - 10, 45);
-      }
-    }
-
-    // Section/spawn info - dev-only overlay (opt in with ?debug=1)
-    if (SHOW_DEBUG_HUD) {
+  // Show progress text
+  if (!bossActive) {
+    if (killsRemaining > 0) {
       ctx.fillStyle = '#ffff00';
-      ctx.font = '8px "Press Start 2P", monospace';
-      ctx.textAlign = 'left';
-      let debugY = ctx.canvas.height - 72;
-      ctx.fillText(`SPAWNED: ${gameState.debug.enemiesSpawned}`, 10, debugY);
-      ctx.fillText(`ALIVE: ${gameState.debug.enemyCount}`, 10, debugY + 12);
-      ctx.fillText(`SECTION: ${gameState.debug.currentSectionIndex}`, 10, debugY + 24);
-      ctx.fillText(`CLEAR: ${gameState.debug.sectionClear ? 'YES' : 'NO'}`, 10, debugY + 36);
-      ctx.fillText(`X POS: ${Math.floor(gameState.debug.playerX)}/${gameState.debug.maxX}`, 10, debugY + 48);
+      ctx.font = 'bold 10px "Press Start 2P", monospace';
+      ctx.fillText(`${killsRemaining} to boss`, canvasWidth - 10, 45);
+    } else {
+      ctx.fillStyle = '#00ff00';
+      ctx.font = 'bold 10px "Press Start 2P", monospace';
+      ctx.fillText(`BOSS UNLOCKED!`, canvasWidth - 10, 45);
     }
+  }
+
+  // Section/spawn info - dev-only overlay (opt in with ?debug=1). Needs the
+  // server's debug block, which is only broadcast when the server runs with
+  // DEBUG=true - so gate on both.
+  if (SHOW_DEBUG_HUD && gameState.debug) {
+    ctx.fillStyle = '#ffff00';
+    ctx.font = '8px "Press Start 2P", monospace';
+    ctx.textAlign = 'left';
+    let debugY = ctx.canvas.height - 72;
+    ctx.fillText(`SPAWNED: ${gameState.debug.enemiesSpawned}`, 10, debugY);
+    ctx.fillText(`ALIVE: ${gameState.debug.enemyCount}`, 10, debugY + 12);
+    ctx.fillText(`SECTION: ${gameState.debug.currentSectionIndex}`, 10, debugY + 24);
+    ctx.fillText(`CLEAR: ${gameState.debug.sectionClear ? 'YES' : 'NO'}`, 10, debugY + 36);
+    ctx.fillText(`X POS: ${Math.floor(gameState.debug.playerX)}/${gameState.debug.maxX}`, 10, debugY + 48);
   }
 }
 

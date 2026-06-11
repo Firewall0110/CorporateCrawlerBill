@@ -441,15 +441,19 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log(`Player disconnected: ${socket.id}`);
-    
-    // Remove player from all rooms
+  // Shared room-exit cleanup used by BOTH the explicit 'leaveRoom' event
+  // (player clicked back to menu) and 'disconnect'. Before leaveRoom existed,
+  // a client returning to the menu silently stayed in its room server-side,
+  // leaking zombie rooms (each with a live 60Hz loop) until the per-socket
+  // room cap rejected new games.
+  const leaveAllRooms = () => {
     gameRooms.forEach((room, roomId) => {
       if (room.hasPlayer(socket.id)) {
         room.removePlayer(socket.id);
-        
+        // Stop receiving this room's broadcasts (no-op on disconnect, where
+        // socket.io tears the membership down itself).
+        socket.leave(roomId);
+
         // Delete room if empty
         if (room.getPlayerCount() === 0) {
           room.stop();
@@ -458,6 +462,18 @@ io.on('connection', (socket) => {
         }
       }
     });
+  };
+
+  // Explicit leave (client's resetToMenu) - same cleanup as disconnect
+  on('leaveRoom', () => {
+    console.log(`Player left room(s): ${socket.id}`);
+    leaveAllRooms();
+  });
+
+  // Handle disconnection
+  socket.on('disconnect', () => {
+    console.log(`Player disconnected: ${socket.id}`);
+    leaveAllRooms();
   });
 });
 

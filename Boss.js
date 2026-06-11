@@ -103,6 +103,7 @@ class Boss extends Enemy {
     let minDistance = this.detectionRange;
 
     players.forEach(player => {
+      if (player.isKnockedOut) return; // Don't chase corpses (mirrors Enemy.updateAI)
       const distance = Math.abs(player.x - this.x);
       if (distance < minDistance) {
         minDistance = distance;
