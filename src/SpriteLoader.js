@@ -194,13 +194,16 @@ function processSheet(img) {
 //
 // Per-frame algorithm:
 //   1. Crop a SOURCE REGION wider than the cell (cell + horizontal margin).
-//   2. Flood-fill from a seed point at the cell's body center, walking
-//      through any opaque pixel. The connected component starting at the
-//      seed = this character + its extended limbs / FX, isolated from
-//      neighbor characters that aren't pixel-connected to it.
-//   3. Bbox the connected component, copy ONLY those pixels into the output
-//      canvas. Anything in the source region that wasn't seed-connected
-//      (the neighbor's body) is discarded.
+//   2. Sample a GRID of seed points inside the cell interior and flood-fill
+//      each, walking through any opaque pixel; keep the LARGEST connected
+//      component. That component = this character + its extended limbs / FX.
+//      The flood reaches into the margin, so limbs spilling past the cell are
+//      captured, while neighbor characters (not pixel-connected) are excluded.
+//      (A single fixed seed used to miss the body entirely on poses that lean
+//      out from under it - e.g. the high-kick extension - producing a stray
+//      leg-only crop. Grid + largest-component is robust to that.)
+//   3. Bbox the chosen component, copy ONLY its pixels into the output canvas.
+//      Anything else in the source region (a neighbor's body) is discarded.
 //   4. Compute anchorX / anchorY from the bbox so the BODY (not the canvas
 //      center) lines up with the unit's bounding box at render time.
 //
@@ -209,8 +212,8 @@ function processSheet(img) {
 // body's screen position is stable across frame transitions.
 
 // Horizontal margin per side as a fraction of the cell width. 0.5 = grab
-// half a cell on each side. The seed-flood then prunes anything that isn't
-// connected to the focal cell's character.
+// half a cell on each side. The component search then keeps only the largest
+// blob seeded from within the focal cell.
 const FRAME_MARGIN_FRAC = 0.5;
 
 function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
@@ -233,63 +236,56 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
     const imgData = workCtx.getImageData(0, 0, srcW, srcH);
     const data = imgData.data;
 
-    // Seed = cell's body-center column, roughly mid-torso vertically.
-    const seedX = (cellX - srcX) + Math.floor(cellW / 2);
-    const seedY = Math.floor(srcH * 0.55);
-
-    let startX = -1, startY = -1;
-    const SEARCH_R = Math.max(16, Math.floor(cellW * 0.4));
-    outer: for (let r = 0; r <= SEARCH_R; r++) {
-      for (let dy = -r; dy <= r; dy++) {
-        for (let dx = -r; dx <= r; dx++) {
-          if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
-          const px = seedX + dx, py = seedY + dy;
-          if (px < 0 || px >= srcW || py < 0 || py >= srcH) continue;
-          if (data[(py * srcW + px) * 4 + 3] > 0) {
-            startX = px; startY = py;
-            break outer;
-          }
-        }
-      }
-    }
-    if (startX < 0) return null; // no opaque pixel found - caller falls back
-
-    // Flood fill from seed through any opaque pixel.
-    const kept = new Uint8Array(srcW * srcH);
+    // Find this cell's character as the LARGEST connected opaque component,
+    // seeded from a GRID of points INSIDE the cell interior. The old approach
+    // dropped a single fixed seed at the cell center / mid-torso; for poses
+    // where the body leans out from under that point - notably the high-kick
+    // extension frame - the seed landed in empty space, grabbed a 1px speck,
+    // failed the size check, and dumped us into the misaligned plain-cell crop
+    // that rendered ONLY a stray leg (the torso lives in the neighbor cell's
+    // pixel space). Sampling a grid and keeping the biggest blob robustly grabs
+    // the leaning torso plus extended limbs - the flood still walks into the
+    // margin, so limbs that spill past the cell are captured. Seeds stay INSIDE
+    // the cell so we pick THIS frame's character, not a neighbor bleeding into
+    // the margin.
+    const seedX = (cellX - srcX) + Math.floor(cellW / 2); // cell-center column (anchorX reference)
+    const label = new Int32Array(srcW * srcH); // 0 = unvisited; else component id
     const fstack = new Int32Array(srcW * srcH * 2);
-    let fsp = 0;
-    const fpush = (x, y) => {
-      if (x < 0 || x >= srcW || y < 0 || y >= srcH) return;
-      const ptr = y * srcW + x;
-      if (kept[ptr]) return;
-      if (data[ptr * 4 + 3] === 0) return;
-      kept[ptr] = 1;
-      fstack[fsp++] = x; fstack[fsp++] = y;
-    };
-    fpush(startX, startY);
-    while (fsp > 0) {
-      const y = fstack[--fsp];
-      const x = fstack[--fsp];
-      fpush(x - 1, y); fpush(x + 1, y);
-      fpush(x, y - 1); fpush(x, y + 1);
-    }
-
-    // Bbox the kept component.
-    let minX = srcW, minY = srcH, maxX = -1, maxY = -1;
-    for (let py = 0; py < srcH; py++) {
-      for (let px = 0; px < srcW; px++) {
-        if (kept[py * srcW + px]) {
-          if (px < minX) minX = px;
-          if (px > maxX) maxX = px;
-          if (py < minY) minY = py;
-          if (py > maxY) maxY = py;
+    let nextLabel = 0;
+    let best = { id: 0, count: -1, minX: 0, minY: 0, maxX: -1, maxY: -1 };
+    const cellLeft = cellX - srcX;
+    const cellRight = cellLeft + cellW;
+    const stepX = Math.max(5, Math.floor(cellW / 12));
+    const stepY = Math.max(5, Math.floor(srcH / 16));
+    for (let gy = Math.floor(srcH * 0.12); gy <= Math.floor(srcH * 0.92); gy += stepY) {
+      for (let gx = cellLeft + 3; gx < cellRight - 3; gx += stepX) {
+        const p0 = gy * srcW + gx;
+        if (label[p0] || data[p0 * 4 + 3] === 0) continue; // already labeled or transparent
+        // Flood this component, labeling pixels and tracking bbox + pixel count.
+        nextLabel++;
+        let f = 0, count = 0, minX = srcW, minY = srcH, maxX = -1, maxY = -1;
+        label[p0] = nextLabel; fstack[f++] = gx; fstack[f++] = gy;
+        while (f > 0) {
+          const y = fstack[--f];
+          const x = fstack[--f];
+          count++;
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+          if (x > 0)        { const q = y * srcW + (x - 1); if (!label[q] && data[q * 4 + 3] !== 0) { label[q] = nextLabel; fstack[f++] = x - 1; fstack[f++] = y; } }
+          if (x < srcW - 1) { const q = y * srcW + (x + 1); if (!label[q] && data[q * 4 + 3] !== 0) { label[q] = nextLabel; fstack[f++] = x + 1; fstack[f++] = y; } }
+          if (y > 0)        { const q = (y - 1) * srcW + x; if (!label[q] && data[q * 4 + 3] !== 0) { label[q] = nextLabel; fstack[f++] = x; fstack[f++] = y - 1; } }
+          if (y < srcH - 1) { const q = (y + 1) * srcW + x; if (!label[q] && data[q * 4 + 3] !== 0) { label[q] = nextLabel; fstack[f++] = x; fstack[f++] = y + 1; } }
         }
+        if (count > best.count) best = { id: nextLabel, count, minX, minY, maxX, maxY };
       }
     }
-    if (maxX < 0) return null;
+    if (best.maxX < 0) return null; // no opaque pixel in the cell - caller falls back
 
-    const bboxW = maxX - minX + 1;
-    const bboxH = maxY - minY + 1;
+    const minX = best.minX, minY = best.minY;
+    const bboxW = best.maxX - minX + 1;
+    const bboxH = best.maxY - minY + 1;
 
     // Sanity checks:
     //  - too-tiny component = stray pixel cluster, not a real character
@@ -300,7 +296,7 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
     if (bboxW * bboxH < 400) return null;
     if (bboxW >= srcW * 0.95 && bboxH >= srcH * 0.95) return null;
 
-    // Build output canvas: only seed-connected pixels survive.
+    // Build output canvas: only the chosen component's pixels survive.
     const outCanvas = document.createElement('canvas');
     outCanvas.width = bboxW;
     outCanvas.height = bboxH;
@@ -311,7 +307,7 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
     for (let py = 0; py < bboxH; py++) {
       for (let px = 0; px < bboxW; px++) {
         const sPtr = (py + minY) * srcW + (px + minX);
-        if (!kept[sPtr]) continue;
+        if (label[sPtr] !== best.id) continue;
         const sIdx = sPtr * 4;
         const oIdx = (py * bboxW + px) * 4;
         out[oIdx]     = data[sIdx];
@@ -323,7 +319,8 @@ function cropFrameWithSeed(sheet, cellX, cellY, cellW, cellH) {
     outCtx.putImageData(outData, 0, 0);
 
     // Anchors:
-    //   anchorX = body's horizontal center within the bbox.
+    //   anchorX = cell-center column within the bbox - keeps the body's
+    //     cell-relative position stable across frames while limbs extend.
     //   anchorY = body's feet within the bbox (cell bottom).
     const anchorX = seedX - minX;
     const anchorY = (cellH - 1) - minY + 1;
