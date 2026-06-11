@@ -2879,7 +2879,10 @@ function drawBillSprite(ctx, unit, screenX, screenY, w, h, facing, bobAmount, hi
   // Now the magenta detonation rings for special (and the swoosh for
   // kick, star for punch) render on top of the sprite so the move
   // always reads as impactful regardless of which frame is showing.
-  if (unit.isAttacking) {
+  // Gate on the AnimClock swing (not unit.isAttacking) so the FX fades out over
+  // the full held visual rather than snapping off when the server's hit window
+  // closes mid-swing.
+  if (getAttackAnim(unit, now)) {
     drawAttackEffect(ctx, unit, screenX, screenY, facing, now);
   }
 
