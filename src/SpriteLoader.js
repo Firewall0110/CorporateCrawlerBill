@@ -22,7 +22,7 @@
  * when the unit's direction is left.
  */
 
-import { getAttackAnim, getKoElapsed } from './AnimClock';
+import { getAttackAnim, getKoElapsed, frameFromTable, ATTACK_FRAME_MS } from './AnimClock';
 
 // Bill's sprite sheet. (There used to be an A/B variant toggle here, but the
 // two candidate sheets were byte-identical, so it was a no-op - removed.)
@@ -545,20 +545,29 @@ export function pickBillFrame(unit, now) {
     return { sprite: get('JUMP', frameIdx), mirror, type: 'jump' };
   }
 
-  // ATTACKING - Punch / Kick / Special by attackType. Progress is timed on the
-  // client clock via AnimClock (keyed off the broadcast attackSeq token), NOT
-  // off a server timestamp - see AnimClock.js for why. The 0.999 clamp holds the
-  // final pose if our local clock outruns attackDuration before the broadcast
-  // clears isAttacking, instead of wrapping back to frame 0.
-  if (unit.isAttacking) {
-    const anim = getAttackAnim(unit, now);
-    const progress = Math.min(0.999, anim ? anim.progress : 0);
+  // ATTACKING - Punch / Kick / Special by attackType. Timed on the client clock
+  // via AnimClock (keyed off the broadcast attackSeq token), NOT off a server
+  // timestamp - see AnimClock.js. We gate on the AnimClock swing (`atk`), not
+  // unit.isAttacking, so the held punch/kick visual can play out its full
+  // duration even after the server's shorter hit window closes.
+  const atk = getAttackAnim(unit, now);
+  if (atk) {
     let animName;
     if (unit.attackType === 'kick') animName = 'KICK';
     else if (unit.attackType === 'special') animName = 'SPECIAL';
     else animName = 'PUNCH';
-    const frames = ANIM[animName].frameCount;
-    const frameIdx = Math.min(frames - 1, Math.floor(progress * frames));
+    const frameCount = ANIM[animName].frameCount;
+    const table = ATTACK_FRAME_MS[unit.attackType];
+    let frameIdx;
+    if (table) {
+      // Per-frame HOLD table: front frames flick by, the extension frame hangs.
+      frameIdx = frameFromTable(table, atk.elapsed);
+    } else {
+      // No table (special / fallback): even spacing across the swing. The 0.999
+      // clamp holds the final pose instead of wrapping back to frame 0.
+      frameIdx = Math.floor(Math.min(0.999, atk.progress) * frameCount);
+    }
+    frameIdx = Math.min(frameCount - 1, frameIdx);
     return { sprite: get(animName, frameIdx), mirror, type: unit.attackType || 'punch' };
   }
 
