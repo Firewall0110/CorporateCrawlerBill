@@ -52,6 +52,12 @@ class Unit {
     this.isJumping = false;
     this.direction = 1; // 1 = right, -1 = left
 
+    // Latest depth-movement intent from handleInput. Up/down is APPLIED in
+    // update() (once per server tick) rather than per input packet, so a
+    // client spamming playerInput can't move faster on the Y axis than the
+    // tick rate allows. Horizontal already works this way via velocityX.
+    this.currentInput = { up: false, down: false };
+
     // Visual
     this.color = '#ffffff';
     this.sprite = null;
@@ -109,6 +115,11 @@ class Unit {
         this.effectiveStats.attackRange *= mod.value;
       }
     });
+
+    // Round the derived max so stacked percentage modifiers can't leave
+    // float drift in the HUD (e.g. "220/220.00000000000003" on the overhead
+    // HP bar). Base stats are untouched - only the effective value rounds.
+    this.effectiveStats.maxHealth = Math.round(this.effectiveStats.maxHealth);
 
     // Sync health to new maxHealth (cap if needed)
     this.maxHealth = this.effectiveStats.maxHealth;
@@ -208,6 +219,23 @@ class Unit {
   update(deltaTime, gravity = 0.8, groundLevel = 600, worldWidth = 2000, playAreaTop = 380) {
     // Apply horizontal velocity
     this.x += this.velocityX * this.effectiveStats.movementSpeed;
+
+    // Apply depth movement (up/down) recorded by handleInput - once per tick,
+    // not per input packet. Same per-tick magnitude a single legit packet used
+    // to give, clamped to the play-area depth band. Only when not jumping
+    // (matches the old handleInput guard) and not knocked out (corpses don't
+    // keep drifting on stale input).
+    if (!this.isJumping && !this.isKnockedOut) {
+      const depthSpeed = 4 * this.effectiveStats.movementSpeed;
+      if (this.currentInput.up) {
+        this.groundY = Math.max(playAreaTop, this.groundY - depthSpeed);
+        this.y = this.groundY;
+      }
+      if (this.currentInput.down) {
+        this.groundY = Math.min(groundLevel, this.groundY + depthSpeed);
+        this.y = this.groundY;
+      }
+    }
 
     // Clamp groundY to play area (depth bounds)
     this.groundY = Math.max(playAreaTop, Math.min(this.groundY, groundLevel));
@@ -329,18 +357,12 @@ class Unit {
       this.direction = 1;
     }
 
-    // Vertical depth movement (up/down) - only when not jumping
-    // Moves groundY directly along the depth plane
-    if (!this.isJumping) {
-      if (input.up) {
-        this.groundY = Math.max(playAreaTop, this.groundY - speed);
-        this.y = this.groundY;
-      }
-      if (input.down) {
-        this.groundY = Math.min(groundLevel, this.groundY + speed);
-        this.y = this.groundY;
-      }
-    }
+    // Vertical depth movement (up/down) - just record the intent here. The
+    // actual groundY change happens in update() once per server tick, so a
+    // client flooding playerInput packets can't teleport along the Y axis
+    // (it used to move `speed` px PER PACKET).
+    this.currentInput.up = !!input.up;
+    this.currentInput.down = !!input.down;
 
     // Jump (relative to current groundY)
     if (input.jump && !this.isJumping && this.y >= this.groundY - 1) {
