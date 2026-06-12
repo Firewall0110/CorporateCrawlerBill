@@ -59,7 +59,12 @@ class Unit {
     // client-side `now - attackStartTime` is corrupted by clock skew. Animations
     // must be timed on the client's own clock; attackSeq is just the trigger.
     this.attackSeq = 0;
+    // Punch and kick share this recovery timer. The special ability has its own
+    // independent cooldown (specialCooldown) so its long 5s recharge does NOT
+    // lock out basic punches/kicks - they're separate buttons with separate
+    // cooldown sweeps on the client.
     this.attackCooldown = 0;
+    this.specialCooldown = 0;
     this.hasHit = false;
     this.isKnockedOut = false;
     this.lastHitTime = 0; // Used for hit flash effect on client
@@ -287,9 +292,12 @@ class Unit {
     // World boundaries (horizontal)
     this.x = Math.max(0, Math.min(this.x, worldWidth - this.width));
 
-    // Update attack cooldown
+    // Update attack cooldowns (punch/kick share one timer; special has its own)
     if (this.attackCooldown > 0) {
       this.attackCooldown -= deltaTime;
+    }
+    if (this.specialCooldown > 0) {
+      this.specialCooldown -= deltaTime;
     }
 
     // Update attack animation
@@ -305,8 +313,16 @@ class Unit {
    * Start an attack - Different mechanics for punch/kick/special
    */
   performAttack(attackType = 'punch') {
-    // Check if can attack
-    if (this.attackCooldown > 0 || this.isAttacking || this.isKnockedOut) {
+    // Check if can attack. Special is gated by its OWN cooldown; punch/kick
+    // share attackCooldown. This keeps the special's long 5s recharge from
+    // blocking basic punches/kicks (and vice-versa).
+    if (this.isAttacking || this.isKnockedOut) {
+      return false;
+    }
+    const onCooldown = attackType === 'special'
+      ? this.specialCooldown > 0
+      : this.attackCooldown > 0;
+    if (onCooldown) {
       return false;
     }
 
@@ -348,7 +364,7 @@ class Unit {
         // kept in sync for any display/debug use.
         this.attackPower = Math.round(this.effectiveStats.attack * 7.5);
         this.attackDuration = 500; // Long, dramatic animation
-        this.attackCooldown = 5; // Fixed 5 second cooldown (overrides attackSpeed scaling)
+        this.specialCooldown = 5; // Fixed 5s cooldown on its OWN timer (doesn't block punch/kick)
         // Bubble hit radius ~2x the old 120 -> 240. GameRoom.checkCombat
         // uses this as a RADIAL distance check for the special (not the
         // rectangular range/vertical-band used by punch/kick), and the
