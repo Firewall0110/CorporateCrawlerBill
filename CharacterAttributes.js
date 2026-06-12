@@ -67,26 +67,25 @@ const TIER_BUFF_MULT = {
   celestial: 4.00   // +300% (hilariously broken)
 };
 
-// Player MOVE-speed buff. Movement at the standard +300% celestial was
-// uncontrollable - Bill skidded across the screen too fast to react to
-// boss telegraphs. Each tier's BONUS is 30% of the standard buff, with
-// celestial fixed at +100% (still strong, still landable).
-// Tier      | std bonus | move bonus  | move multiplier
-// common    | +10%      | +3%         | 1.03
-// uncommon  | +20%      | +6%         | 1.06
-// rare      | +35%      | +10.5%      | 1.105
-// epic      | +55%      | +16.5%      | 1.165
-// legendary | +80%      | +24%        | 1.24
-// mythic    | +120%     | +36%        | 1.36
-// celestial | (special) | +100%       | 2.00
+// Player MOVE-speed buff. Halved again (playtest: still too fast) - each
+// tier's BONUS is now HALF the previous move bonus, rounded DOWN to the nearest
+// whole percent, then expressed as a multiplier.
+// Tier      | prev bonus | halved+floored | move multiplier
+// common    | +3%        | +1%            | 1.01
+// uncommon  | +6%        | +3%            | 1.03
+// rare      | +10.5%     | +5%            | 1.05
+// epic      | +16.5%     | +8%            | 1.08
+// legendary | +24%       | +12%           | 1.12
+// mythic    | +36%       | +18%           | 1.18
+// celestial | +100%      | +50%           | 1.50
 const TIER_MOVE_BUFF_MULT = {
-  common:    1.03,
-  uncommon:  1.06,
-  rare:      1.105,
-  epic:      1.165,
-  legendary: 1.24,
-  mythic:    1.36,
-  celestial: 2.00
+  common:    1.01,
+  uncommon:  1.03,
+  rare:      1.05,
+  epic:      1.08,
+  legendary: 1.12,
+  mythic:    1.18,
+  celestial: 1.50
 };
 
 // Boss-only max-HP debuff. The PER-TIER MAGNITUDE mirrors TIER_MOVE_BUFF_MULT

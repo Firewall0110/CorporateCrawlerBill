@@ -3,14 +3,16 @@
  * Handles base stats, effective stats computation, and modifier management
  */
 
-// BALANCE KNOB: hard ceiling on effective armor for EVERY unit (players,
-// enemies, bosses). Armor is a direct % damage reduction in takeDamage()
-// (damage * (1 - armor/100)), so 100 armor = total immunity. Flat armor
-// picks stack additively across the team (base 25 + picks), meaning one
-// celestial armor pick (110) or two mid-tier picks used to hit the immunity
-// floor. 80 = a 20%-damage-taken floor: tanky, never invincible. Dial here
-// during playtest.
-const MAX_EFFECTIVE_ARMOR = 80;
+// BALANCE KNOBS: armor model (applies to EVERY unit - players, enemies, boss).
+// Effective armor is clamped to a max of MAX_EFFECTIVE_ARMOR. The mitigation
+// curve is LINEAR: armor 0 -> 0% reduction, armor MAX -> ARMOR_MAX_MITIGATION.
+//   mitigation = min(armor, 120) / 120 * 0.85   (so 120 armor = 85% less damage)
+// Special attacks IGNORE armor entirely (takeDamage(dmg, true)).
+// NEGATIVE armor AMPLIFIES incoming damage by +100% per -10 armor:
+//   x(1 + |armor|/10)  ->  -10 = x2, -20 = x3, -30 = x4, ...
+// so enemy-armor-shred picks can snowball a fight. Dial here during playtest.
+const MAX_EFFECTIVE_ARMOR = 120;
+const ARMOR_MAX_MITIGATION = 0.85;
 
 class Unit {
   constructor(id, name, baseStats, position = { x: 0, y: 0 }) {
@@ -138,9 +140,9 @@ class Unit {
     // HP bar). Base stats are untouched - only the effective value rounds.
     this.effectiveStats.maxHealth = Math.round(this.effectiveStats.maxHealth);
 
-    // Clamp armor AFTER all modifiers so stacked flat-armor picks can't
-    // reach the 100-armor immunity floor (see MAX_EFFECTIVE_ARMOR above).
-    // Applies to all units, keeping enemy/boss armor sane too.
+    // Clamp the UPPER bound of effective armor after all modifiers (cap at
+    // MAX_EFFECTIVE_ARMOR = 85% mitigation). Negative armor is intentionally
+    // NOT clamped - it amplifies incoming damage in takeDamage().
     this.effectiveStats.armor = Math.min(MAX_EFFECTIVE_ARMOR, this.effectiveStats.armor || 0);
 
     // Sync health to new maxHealth (cap if needed)
@@ -153,10 +155,23 @@ class Unit {
   /**
    * Apply damage to this unit
    */
-  takeDamage(damage) {
-    // Apply armor reduction
-    const armorReduction = this.effectiveStats.armor || 0;
-    const finalDamage = Math.max(1, damage * (1 - armorReduction / 100));
+  takeDamage(damage, ignoreArmor = false) {
+    let finalDamage;
+    if (ignoreArmor) {
+      // Special attacks pierce armor entirely - neither mitigated nor amplified.
+      finalDamage = damage;
+    } else {
+      const armor = this.effectiveStats.armor || 0;
+      if (armor >= 0) {
+        // Linear: 0 armor -> 0% off, MAX armor -> ARMOR_MAX_MITIGATION off.
+        const mitigation = Math.min(armor, MAX_EFFECTIVE_ARMOR) / MAX_EFFECTIVE_ARMOR * ARMOR_MAX_MITIGATION;
+        finalDamage = damage * (1 - mitigation);
+      } else {
+        // Negative armor amplifies: -10 -> x2, -20 -> x3, ...
+        finalDamage = damage * (1 + (-armor) / 10);
+      }
+    }
+    finalDamage = Math.max(1, finalDamage);
 
     this.health -= finalDamage;
 
