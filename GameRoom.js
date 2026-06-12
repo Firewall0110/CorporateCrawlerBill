@@ -898,19 +898,18 @@ class GameRoom {
     let knockbackForce = 5;
 
     // Apply attack type multipliers (AUTHORITATIVE damage - performAttack's
-    // attackPower is display-only). Special is x7.5 AND pierces armor entirely.
+    // attackPower is display-only). Punch is the baseline (raw effective attack,
+    // no multiplier); kick hits 3x and special 15x a punch. Special also pierces
+    // armor entirely.
     const ignoreArmor = attacker.attackType === 'special';
     if (attacker.attackType === 'kick') {
-      damage *= 1.5;
+      damage *= 3.0;
       knockbackForce = 8;
     } else if (attacker.attackType === 'special') {
-      damage *= 7.5;
+      damage *= 15.0;
       knockbackForce = 12;
-    } else {
-      // Punch (basic attack). The PLAYER punch is halved (balance pass: it was
-      // out-damaging everything else); enemy/mook punches keep their base attack.
-      if (attacker.team === 'players') damage *= 0.5;
     }
+    // else: punch / basic attack uses the raw effective attack unchanged.
 
     // takeDamage returns the ACTUAL damage dealt after armor (mitigated when
     // the target has positive armor, amplified when armor is negative - e.g.

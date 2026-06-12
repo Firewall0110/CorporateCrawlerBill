@@ -10,7 +10,8 @@ class Player extends Unit {
     // Base stats for players
     const playerBaseStats = {
       maxHealth: 200,  // Reduced from 500 after playtest feedback - runs felt too forgiving
-      attack: 20,        // Reduced from 100 - punch does 20 damage (5 hits to kill)
+      attack: 10,        // Base = punch damage. Kick/special scale up from this
+                         // in GameRoom.applyDamage (kick x3, special x15).
       attackSpeed: 1.2,
       armor: 25,
       attackRange: 80,

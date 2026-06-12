@@ -363,7 +363,7 @@ class Unit {
       case 'kick':
         // Longer kick - hits multiple enemies, extends further
         this.attackRange = 100;
-        this.attackPower = Math.round(this.effectiveStats.attack * 1.5);
+        this.attackPower = Math.round(this.effectiveStats.attack * 3.0);
         this.attackDuration = 350; // Slower, longer animation
         this.attackCooldown = cooldown * 1.2; // Slower recovery
         this.attackRadius = 60; // Larger radius - hits multiple
@@ -371,13 +371,12 @@ class Unit {
       case 'special':
         // Area clear - big AoE attack with fixed 5s cooldown
         this.attackRange = 150;
-        // Damage multiplier bumped from x2.5 -> x7.5 (3x stronger). Special
-        // is gated by a 5s cooldown so the cumulative DPS stays in check,
-        // but each cast now feels like a real "screen-clear" ultimate.
+        // Special hits 15x a punch - gated by a 5s cooldown so cumulative DPS
+        // stays in check, but each cast feels like a real "screen-clear" ult.
         // NOTE: actual combat damage is computed in GameRoom.applyDamage
         // (which has its own per-type multipliers) - this attackPower is
         // kept in sync for any display/debug use.
-        this.attackPower = Math.round(this.effectiveStats.attack * 7.5);
+        this.attackPower = Math.round(this.effectiveStats.attack * 15.0);
         this.attackDuration = 500; // Long, dramatic animation
         this.specialCooldown = 5; // Fixed 5s cooldown on its OWN timer (doesn't block punch/kick)
         // Bubble hit radius ~2x the old 120 -> 240. GameRoom.checkCombat
