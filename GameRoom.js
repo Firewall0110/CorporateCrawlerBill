@@ -912,7 +912,13 @@ class GameRoom {
       if (attacker.team === 'players') damage *= 0.5;
     }
 
-    target.takeDamage(damage, ignoreArmor);
+    // takeDamage returns the ACTUAL damage dealt after armor (mitigated when
+    // the target has positive armor, amplified when armor is negative - e.g.
+    // shredded below 0 by Drill Down - and unchanged when special pierces it).
+    // Broadcast THAT, not the raw pre-armor `damage`, so the floating damage
+    // number reflects armor and armor-shred picks visibly change it. Using the
+    // raw value made armor buffs/shreds look like they did nothing.
+    const dealt = target.takeDamage(damage, ignoreArmor);
 
     // Mark target as recently hit (for hit flash effect on client)
     target.lastHitTime = Date.now();
@@ -925,7 +931,7 @@ class GameRoom {
     this.io.to(this.id).emit('playerHit', {
       attackerId: attacker.id,
       targetId: target.id,
-      damage: Math.round(damage),
+      damage: Math.round(dealt),
       targetHealth: target.health,
       targetX: target.x,
       targetY: target.y,
