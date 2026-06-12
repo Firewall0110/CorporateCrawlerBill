@@ -9,7 +9,7 @@ const Unit = require('./Unit');
 // it can act) for STUN_LOCK_ESCAPE_MS straight, it panics: leaps away from its
 // attacker, gets a brief movement-speed boost, then sprints back to re-engage
 // the nearest player. The boss does NOT use this (separate class).
-const STUN_LOCK_ESCAPE_MS = 4000; // continuous stun-lock before bailing out
+const STUN_LOCK_ESCAPE_MS = 2000; // continuous stun-lock before bailing out
 // Two hits count as the same combo if they land within this gap. Comfortably
 // longer than the ~500ms hit-stun window so a steady combo chains, but short
 // enough that occasional stray hits don't accumulate into a false escape.
