@@ -280,9 +280,11 @@ class Boss extends Enemy {
             Math.pow(player.x - this.x, 2) + Math.pow(player.y - this.y, 2)
           );
           if (distance < attack.radius) {
-            player.takeDamage(attack.damage);
+            // Record the ACTUAL post-armor damage takeDamage returns, not the
+            // raw attack.damage, so the player's damage number reflects armor.
+            const dealt = player.takeDamage(attack.damage);
             player.lastHitTime = now;
-            this.recordHit(player, attack.damage);
+            this.recordHit(player, dealt);
             // Knockback away from boss
             const direction = player.x > this.x ? 1 : -1;
             player.applyKnockback(direction, 8);
@@ -310,9 +312,9 @@ class Boss extends Enemy {
           // Check X direction (beam fires in boss's facing direction)
           const fromBoss = player.x - this.x;
           if (fromBoss * this.direction > 0 && Math.abs(fromBoss) < 1000) {
-            player.takeDamage(attack.damage);
+            const dealt = player.takeDamage(attack.damage);
             player.lastHitTime = now;
-            this.recordHit(player, attack.damage);
+            this.recordHit(player, dealt);
             player.applyKnockback(this.direction, 6);
           }
         });
@@ -337,9 +339,9 @@ class Boss extends Enemy {
                 Math.pow(player.x - zone.x, 2) + Math.pow(player.y - zone.y, 2)
               );
               if (distance < zone.radius) {
-                player.takeDamage(attack.damage);
+                const dealt = player.takeDamage(attack.damage);
                 player.lastHitTime = now;
-                this.recordHit(player, attack.damage);
+                this.recordHit(player, dealt);
                 const direction = player.x > zone.x ? 1 : -1;
                 player.applyKnockback(direction, 7);
               }
