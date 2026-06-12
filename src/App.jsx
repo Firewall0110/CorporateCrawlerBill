@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import { getTileset } from './Tileset';
 import { loadBillSprites, getBillSprites, pickBillFrame } from './SpriteLoader';
-import { getAttackAnim, pruneAnimClocks, resetAnimClocks } from './AnimClock';
+import { getAttackAnim, getHitElapsed, pruneAnimClocks, resetAnimClocks } from './AnimClock';
 import { loadTicketSprites, getTicketSprites, pickTicketFrame } from './TicketSprites';
 import { loadBossSprites, getBossSprites, pickBossFrame, loadBossDeathSprites, pickBossDeathFrame } from './BossSprites';
 
@@ -1663,8 +1663,10 @@ const BeatEmUpGame = () => {
       // different enemy. Local-only so other players' hits don't spam the FX.
       if (gameState.players) {
         const me = gameState.players.find(p => p.id === playerId);
-        if (me && me.lastHitTime) {
-          const sinceHitMe = now - me.lastHitTime;
+        if (me) {
+          // Client-clock elapsed (AnimClock), not `now - server lastHitTime` -
+          // see getHitElapsed; avoids the cross-machine clock-skew flash bug.
+          const sinceHitMe = getHitElapsed(me, now);
           if (sinceHitMe < HIT_FLASH_DURATION_MS) {
             const t = sinceHitMe / HIT_FLASH_DURATION_MS;        // 0 -> 1
             const intensity = (1 - t) * 0.55;                    // peak 55%
@@ -2496,7 +2498,9 @@ function drawUnit(ctx, unit, cameraX, groundLevel, isMe, now, deathT = 0) {
   // Hit / stun feedback. Extended from 150ms -> 350ms so the player can
   // actually see the brief stun window (knockback decay) - previously only
   // the impact frame flashed and the stun was visually invisible.
-  const sinceHit = unit.lastHitTime ? now - unit.lastHitTime : Infinity;
+  // Timed on the CLIENT clock via AnimClock (not `now - server lastHitTime`),
+  // so clock skew can't leave the unit stuck solid-white for ~5s on desktop.
+  const sinceHit = getHitElapsed(unit, now);
   const hitFlash = sinceHit < HIT_FLASH_DURATION_MS;
   const flashAlpha = hitFlash ? Math.max(0, 1 - sinceHit / HIT_FLASH_DURATION_MS) : 0;
 
