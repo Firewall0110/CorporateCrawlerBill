@@ -611,6 +611,11 @@ class GameRoom {
       const enemyId = `${this.id}-e${this.enemiesSpawned}-${Math.random().toString(36).substring(2, 8)}`;
 
       const baseStats = this.getEnemyBaseStats(waveConfig.enemyType);
+      // Per-stage mob armor (balance): stage 1 = 30, stage 2 = 50, stage 3 = 80.
+      // Makes mobs tankier deeper in the run and gives armor-shred picks teeth.
+      // getEnemyBaseStats returns a fresh object per call, so mutating is safe.
+      const STAGE_MOB_ARMOR = [30, 50, 80];
+      baseStats.armor = STAGE_MOB_ARMOR[this.currentZoneIndex] ?? 80;
       const spawnX = baseSpawnX + i * 60; // Spread enemies out
 
       // Vary Y position across the play area depth for visual variety
@@ -776,7 +781,7 @@ class GameRoom {
       maxHealth: this.computeBossBaseHealth(playerCount),
       attack: 160,           // 5x bump: 32 -> 160 (boss melee threatens 4-5 shot KO)
       attackSpeed: 1.0,
-      armor: 25,             // bumped: 20 -> 25
+      armor: 100,            // heavy armor (85% cap is 120) - special pierces it
       attackRange: 180,      // bumped: 150 -> 180
       movementSpeed: 0.85    // bumped: 0.4 -> 0.85 (over 2x)
     };
@@ -892,20 +897,22 @@ class GameRoom {
     let damage = attacker.effectiveStats.attack;
     let knockbackForce = 5;
 
-    // Apply attack type multipliers (matching Unit.performAttack mechanics).
-    // These are the AUTHORITATIVE damage multipliers - performAttack's
-    // attackPower is display-only. Special is x7.5 (the intended "3x bump"
-    // from the old x2.5; the previous edit only touched performAttack so it
-    // never actually applied - fixed here).
+    // Apply attack type multipliers (AUTHORITATIVE damage - performAttack's
+    // attackPower is display-only). Special is x7.5 AND pierces armor entirely.
+    const ignoreArmor = attacker.attackType === 'special';
     if (attacker.attackType === 'kick') {
       damage *= 1.5;
       knockbackForce = 8;
     } else if (attacker.attackType === 'special') {
       damage *= 7.5;
       knockbackForce = 12;
+    } else {
+      // Punch (basic attack). The PLAYER punch is halved (balance pass: it was
+      // out-damaging everything else); enemy/mook punches keep their base attack.
+      if (attacker.team === 'players') damage *= 0.5;
     }
 
-    target.takeDamage(damage);
+    target.takeDamage(damage, ignoreArmor);
 
     // Mark target as recently hit (for hit flash effect on client)
     target.lastHitTime = Date.now();
