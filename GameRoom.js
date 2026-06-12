@@ -17,6 +17,15 @@ const BROADCAST_HZ = 30;
 // client can play its ~300ms flash-out death effect before it's removed.
 const ENEMY_CORPSE_LINGER_MS = 320;
 
+// Kick "juggle" feel vs regular mobs (not the boss): a kick stuns longer than a
+// punch and pops the mob lightly up and back, away from the crawler. The stun
+// suppresses the mob's chase/attack AI for KICK_STUN_MS (handled in Enemy), so
+// the knockback actually carries instead of being overwritten by the chase the
+// next tick. Dial these in playtest.
+const KICK_STUN_MS = 650;     // how long the kicked mob is stunned (vs ~minimal for a punch)
+const KICK_JUGGLE_PUSH = 9;   // horizontal launch away from the attacker (px/tick, decays via friction)
+const KICK_JUGGLE_LIFT = 6;   // upward pop (initial -velocityY; light, arcs back down under gravity)
+
 /**
  * GameRoom - Manages a single multiplayer game session
  * Handles players, enemies, level progression, stat management
@@ -922,9 +931,20 @@ class GameRoom {
     // Mark target as recently hit (for hit flash effect on client)
     target.lastHitTime = Date.now();
 
-    // Knockback
+    // Knockback. Direction is away from the attacker.
     const direction = target.x > attacker.x ? 1 : -1;
-    target.applyKnockback(direction, knockbackForce);
+    const isRegularMob = target.team === 'enemies' && !target.isBoss;
+    if (attacker.attackType === 'kick' && isRegularMob) {
+      // Kick "juggle": lift the mob lightly and launch it back away from the
+      // crawler, and stun it longer than a punch. The stun (read by Enemy.AI)
+      // suppresses chase/attack so the launch actually carries - otherwise the
+      // chase AI overwrites velocityX the very next tick and the mob walks
+      // straight back in. The boss is exempt (it isn't juggled around).
+      target.applyKnockback(direction, KICK_JUGGLE_PUSH, KICK_JUGGLE_LIFT);
+      target.stunnedUntil = Date.now() + KICK_STUN_MS;
+    } else {
+      target.applyKnockback(direction, knockbackForce);
+    }
 
     // Broadcast hit event with position for damage numbers
     this.io.to(this.id).emit('playerHit', {

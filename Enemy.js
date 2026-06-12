@@ -44,6 +44,11 @@ class Enemy extends Unit {
     this.patrolRight = position.x + 100;
     this.lastAttackTime = 0;
 
+    // Hit-stun: while now < stunnedUntil the mob is frozen (no chase/attack) and
+    // its velocity is left to physics, so a kick's juggle launch carries instead
+    // of being overwritten by the chase AI. Set by GameRoom on a kick hit.
+    this.stunnedUntil = 0;
+
     // Stun-lock escape state
     this.stunLockStart = 0;   // when the current continuous stun-lock began (0 = none)
     this.lastStunHit = 0;     // timestamp of the most recent hit (for chain detection)
@@ -83,6 +88,9 @@ class Enemy extends Unit {
     const now = Date.now();
 
     // If we've been stun-locked (steadily comboed) for too long, panic-leap away.
+    // Checked before the kick hit-stun so a mob that's been juggle/combo-locked
+    // for STUN_LOCK_ESCAPE_MS can still bail out instead of being pinned forever
+    // (startEscape clears stunnedUntil so the leap isn't immediately refrozen).
     const stunLocked = this.stunLockStart &&
       now - this.lastStunHit <= STUN_CHAIN_WINDOW_MS &&
       now - this.stunLockStart >= STUN_LOCK_ESCAPE_MS;
@@ -93,6 +101,14 @@ class Enemy extends Unit {
     // While escaping, override normal chase until we've landed clear.
     if (this.aiState === 'escaping') {
       this.updateEscape(now);
+      return;
+    }
+
+    // Hit-stun (e.g. from a kick): don't chase or attack. Leave velocity alone
+    // so the kick's juggle launch (up + back) is carried by update()'s physics
+    // and friction; the mob recovers when the stun expires.
+    if (now < this.stunnedUntil) {
+      this.aiState = 'stunned';
       return;
     }
 
@@ -185,9 +201,11 @@ class Enemy extends Unit {
     this.escapeUntil = now + ESCAPE_MIN_AIR_MS;
     this.speedBoostUntil = now + ESCAPE_BOOST_MS;
 
-    // Reset stun-lock tracking so the escape isn't re-triggered next tick.
+    // Reset stun-lock tracking so the escape isn't re-triggered next tick, and
+    // clear any kick hit-stun so the leap isn't immediately refrozen.
     this.stunLockStart = 0;
     this.lastStunHit = 0;
+    this.stunnedUntil = 0;
   }
 
   /**
