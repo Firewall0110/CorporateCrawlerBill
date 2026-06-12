@@ -53,7 +53,8 @@ const _clocks = new Map();
 function clockFor(id, now) {
   let clk = _clocks.get(id);
   if (!clk) {
-    clk = { token: null, attackLocalStart: 0, attackActive: false, koLocalStart: 0, lastSeen: now };
+    clk = { token: null, attackLocalStart: 0, attackActive: false, koLocalStart: 0,
+            hitToken: undefined, hitLocalStart: -1, lastSeen: now };
     _clocks.set(id, clk);
   }
   clk.lastSeen = now;
@@ -129,6 +130,31 @@ export function getKoElapsed(unit, now) {
   }
   clk.koLocalStart = 0;
   return 0;
+}
+
+/**
+ * Client-local elapsed (ms) since this unit was last hit, or Infinity if it
+ * hasn't been hit since we started watching it. The server's `lastHitTime` is a
+ * Date.now() on a DIFFERENT machine, so the old `clientNow - lastHitTime` was
+ * corrupted by clock skew: on a desktop whose clock ran a few seconds behind
+ * the server, the hit "elapsed" started deeply negative and took ~5s to climb
+ * past the flash cutoff, leaving the unit stuck solid-white. Here lastHitTime is
+ * used ONLY as a change-token: when it changes we stamp OUR clock, so the flash
+ * is always its true length regardless of platform/clock.
+ */
+export function getHitElapsed(unit, now) {
+  if (!unit || unit.id == null) return Infinity;
+  const clk = clockFor(unit.id, now);
+  const lh = unit.lastHitTime || 0;
+  if (clk.hitToken === undefined) {
+    // First time we see this unit: adopt its current hit token WITHOUT flashing
+    // (any hit it already carries predates our observation).
+    clk.hitToken = lh;
+  } else if (lh !== clk.hitToken) {
+    clk.hitToken = lh;
+    clk.hitLocalStart = lh ? now : -1; // new hit -> stamp the client clock
+  }
+  return clk.hitLocalStart < 0 ? Infinity : (now - clk.hitLocalStart);
 }
 
 /**
