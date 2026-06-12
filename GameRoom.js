@@ -1185,6 +1185,10 @@ class GameRoom {
 
     this.players.forEach(player => {
       player.attributes.forEach(attr => {
+        // Attributes sacrificed to MOH (Modified-duty Of Health) after a
+        // knockout are disabled: they convey NO benefit to the player or the
+        // team, so their modifier is excluded from the active set entirely.
+        if (attr.sacrificed) return;
         this.activeModifiers.push(attr.modifier);
       });
     });
@@ -1276,33 +1280,67 @@ class GameRoom {
   }
 
   /**
-   * Respawn a dead player (continue game)
+   * Respawn a dead player via MOH (Modified-duty Of Health).
+   *
+   * Continuing is NOT a free heal: the player sacrifices their most recently
+   * acquired still-active attribute, which is permanently disabled for the rest
+   * of the run (no benefit to them or the team; rendered struck-through in the
+   * HUD). A player may keep continuing as long as they have an unsacrificed
+   * attribute left to give up; once they're out, the client offers only "return
+   * to title" and never calls this.
+   *
+   * Returns true if the player was revived, false if there was nothing to
+   * sacrifice (so the continue is rejected server-side too, not just hidden in
+   * the UI).
    */
   respawnPlayer(socketId) {
     const player = this.players.get(socketId);
     // Only a knocked-out player may respawn. Without this guard `playerContinue`
-    // is a free, on-demand full heal any client can spam mid-fight.
-    if (player && player.isKnockedOut) {
-      // Reset player stats
-      player.health = player.maxHealth;
-      player.isKnockedOut = false;
-      player.x = 100; // Reset to start position
-      // Respawn at mid play-area depth
-      const midDepth = (this.playAreaTop + this.groundLevel) / 2 + 40;
-      player.y = midDepth;
-      player.groundY = midDepth;
-      player.velocityX = 0;
-      player.velocityY = 0;
+    // is a free, on-demand revive any client can spam mid-fight.
+    if (!player || !player.isKnockedOut) return false;
 
-      // Re-arm death detection for this player only - other downed players
-      // keep their own entries (and overlays) untouched.
-      this.deathEmitted.delete(socketId);
-
-      debugLog(`[Respawn] Player ${socketId} continued!`);
-      this.io.to(this.id).emit('playerRespawned', {
-        playerId: socketId
-      });
+    // Find the most recently acquired attribute that is still active and
+    // sacrifice it. attributes is push-ordered, so scan from the end.
+    let sacrificed = null;
+    for (let i = player.attributes.length - 1; i >= 0; i--) {
+      if (!player.attributes[i].sacrificed) {
+        player.attributes[i].sacrificed = true;
+        sacrificed = player.attributes[i];
+        break;
+      }
     }
+    // Nothing left to give up -> cannot continue (e.g. downed with no
+    // unsacrificed attributes). The client gates this too, but guard here.
+    if (!sacrificed) return false;
+
+    // Recompute so the sacrificed attribute stops benefiting the player/team.
+    // This also re-derives maxHealth (it may drop if the sacrifice was an HP
+    // buff); the full-heal below then tops up to the NEW max.
+    this.recomputeAllEffectiveStats();
+
+    // Reset player stats - resume the current level where it stands.
+    player.health = player.maxHealth;
+    player.isKnockedOut = false;
+    player.x = 100; // Reset to start position
+    // Respawn at mid play-area depth
+    const midDepth = (this.playAreaTop + this.groundLevel) / 2 + 40;
+    player.y = midDepth;
+    player.groundY = midDepth;
+    player.velocityX = 0;
+    player.velocityY = 0;
+
+    // Re-arm death detection for this player only - other downed players
+    // keep their own entries (and overlays) untouched.
+    this.deathEmitted.delete(socketId);
+
+    debugLog(`[MOH] Player ${socketId} returned to work; sacrificed "${sacrificed.name}"`);
+    this.io.to(this.id).emit('playerRespawned', {
+      playerId: socketId
+    });
+    // Push the updated attribute list (sacrificed flag) so the HUD strikes the
+    // disabled perk through and ally-buff totals drop it.
+    this.io.to(this.id).emit('playerUpdated', { player: player.getState() });
+    return true;
   }
 
   /**
