@@ -205,11 +205,12 @@ class Unit {
   }
 
   /**
-   * Apply knockback to this unit
+   * Apply knockback to this unit. `lift` is the upward pop (default a small 3);
+   * a kick passes a larger value to "juggle" the target up and back.
    */
-  applyKnockback(direction, velocity) {
+  applyKnockback(direction, velocity, lift = 3) {
     this.velocityX = direction * velocity;
-    this.velocityY = -3; // Small upward knockback
+    this.velocityY = -lift; // Upward knockback (juggle pop scales with lift)
   }
 
   /**
