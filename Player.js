@@ -66,7 +66,10 @@ class Player extends Unit {
         tier: attr.tier,
         tierLabel: attr.tierLabel,
         tierColor: attr.tierColor,
-        modifier: attr.modifier
+        modifier: attr.modifier,
+        // Sacrificed to MOH after a knockout - disabled (no benefit), shown
+        // struck-through in the HUD and excluded from ally-buff totals.
+        sacrificed: !!attr.sacrificed
       }))
     };
   }

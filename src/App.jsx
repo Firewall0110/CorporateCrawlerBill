@@ -2228,7 +2228,16 @@ const BeatEmUpGame = () => {
                 the first), teammates keep playing, and it auto-clears on
                 both respawn and stage-transition revive (each sets
                 isKnockedOut=false server-side). */}
-            {me?.isKnockedOut && !levelWon && (
+            {me?.isKnockedOut && !levelWon && (() => {
+              // MOH (Modified-duty Of Health) continue: you may return to work
+              // by sacrificing your most recently acquired still-active
+              // attribute. The next attribute to be revoked is the LAST
+              // unsacrificed one in the list. If there are none left, the only
+              // way out is back to the title screen.
+              const liveAttrs = (me.attributes || []).filter(a => !a.sacrificed);
+              const canMOH = liveAttrs.length > 0;
+              const nextSacrifice = canMOH ? liveAttrs[liveAttrs.length - 1] : null;
+              return (
               <div style={{
                 position: 'absolute',
                 top: 0,
@@ -2245,44 +2254,114 @@ const BeatEmUpGame = () => {
                 <div style={{
                   textAlign: 'center',
                   fontFamily: '"Press Start 2P", monospace',
-                  color: '#ff3333'
+                  color: '#ff3333',
+                  maxWidth: '760px',
+                  padding: '0 20px'
                 }}>
-                  <h1 style={{ fontSize: '40px', marginBottom: '30px', textShadow: '0 0 20px #ff3333' }}>
-                    GAME OVER
+                  <h1 style={{ fontSize: '34px', marginBottom: '18px', textShadow: '0 0 20px #ff3333', lineHeight: 1.3 }}>
+                    WORKPLACE INJURY!
                   </h1>
-                  <p style={{ fontSize: '18px', marginBottom: '40px', color: '#ffff00' }}>
-                    You were defeated!
+                  <p style={{ fontSize: '18px', marginBottom: '36px', color: '#ffff00' }}>
+                    You're on paid leave!
                   </p>
-                  <button
-                    onClick={() => {
-                      socket.emit('playerContinue', { roomId });
-                    }}
-                    style={{
-                      padding: '20px 40px',
-                      fontSize: '16px',
-                      fontFamily: '"Press Start 2P", monospace',
-                      background: '#00ff00',
-                      color: '#000000',
-                      border: 'none',
-                      borderRadius: '5px',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s',
-                      boxShadow: '0 0 20px rgba(0, 255, 0, 0.5)'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.background = '#33ff33';
-                      e.target.style.boxShadow = '0 0 40px rgba(0, 255, 0, 0.8)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.background = '#00ff00';
-                      e.target.style.boxShadow = '0 0 20px rgba(0, 255, 0, 0.5)';
-                    }}
-                  >
-                    CONTINUE
-                  </button>
+
+                  {canMOH ? (
+                    <>
+                      <button
+                        onClick={() => {
+                          socket.emit('playerContinue', { roomId });
+                        }}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          padding: '18px 24px',
+                          marginBottom: '16px',
+                          fontSize: '13px',
+                          lineHeight: 1.5,
+                          fontFamily: '"Press Start 2P", monospace',
+                          background: '#00cc66',
+                          color: '#000000',
+                          border: 'none',
+                          borderRadius: '5px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          boxShadow: '0 0 20px rgba(0, 255, 120, 0.5)'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#33ff99';
+                          e.currentTarget.style.boxShadow = '0 0 40px rgba(0, 255, 120, 0.8)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = '#00cc66';
+                          e.currentTarget.style.boxShadow = '0 0 20px rgba(0, 255, 120, 0.5)';
+                        }}
+                      >
+                        MOH — Return to work with restrictions
+                      </button>
+                      {nextSacrifice && (
+                        <p style={{ fontSize: '10px', lineHeight: 1.6, marginBottom: '28px', color: '#ff8888' }}>
+                          Restriction: you lose{' '}
+                          <span style={{ color: '#ffcc66' }}>{nextSacrifice.description}</span>
+                          {nextSacrifice.tierLabel ? ` [${nextSacrifice.tierLabel}]` : ''}
+                        </p>
+                      )}
+                      <button
+                        onClick={resetToMenu}
+                        style={{
+                          display: 'block',
+                          width: '100%',
+                          padding: '14px 24px',
+                          fontSize: '12px',
+                          fontFamily: '"Press Start 2P", monospace',
+                          background: '#552222',
+                          color: '#ffcccc',
+                          border: '2px solid #aa4444',
+                          borderRadius: '5px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.background = '#773333'; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.background = '#552222'; }}
+                      >
+                        Return to title screen
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p style={{ fontSize: '12px', lineHeight: 1.7, marginBottom: '32px', color: '#ff8888' }}>
+                        No restrictions left to accept.<br />HR has terminated your crawl.
+                      </p>
+                      <button
+                        onClick={resetToMenu}
+                        style={{
+                          padding: '20px 40px',
+                          fontSize: '14px',
+                          fontFamily: '"Press Start 2P", monospace',
+                          background: '#cc3333',
+                          color: '#000000',
+                          border: 'none',
+                          borderRadius: '5px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          boxShadow: '0 0 20px rgba(255, 60, 60, 0.5)'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#ff5555';
+                          e.currentTarget.style.boxShadow = '0 0 40px rgba(255, 60, 60, 0.8)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = '#cc3333';
+                          e.currentTarget.style.boxShadow = '0 0 20px rgba(255, 60, 60, 0.5)';
+                        }}
+                      >
+                        Return to title screen
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
-            )}
+              );
+            })()}
           </div>
 
           {/* Attribute picker modal - blocks the screen with 3 rolled
@@ -3946,6 +4025,7 @@ function drawAllyBuffTotals(ctx, gameState, playerId, canvasWidth) {
   // Group every teammate modifier by (team it applies to, stat it targets)
   const groups = new Map(); // "team:target" -> aggregate
   others.forEach(p => (p.attributes || []).forEach(attr => {
+    if (attr.sacrificed) return; // disabled via MOH - contributes nothing
     const m = attr.modifier;
     if (!m || !m.target) return;
     const groupKey = `${m.appliesToTeam}:${m.target}`;
@@ -4037,10 +4117,25 @@ function drawHUD(ctx, gameState, playerId, canvasWidth) {
     // attack") + tier tag - playtesters couldn't remember what the flavor
     // names actually did, so the names are dropped from the HUD.
     thisPlayer.attributes.forEach(attr => {
-      ctx.fillStyle = attr.tierColor || '#ffff00';
       // e.g. "• +80% team attack  [MYTHIC]"
       const tierTag = attr.tierLabel ? `  [${attr.tierLabel}]` : '';
-      ctx.fillText(`• ${attr.description}${tierTag}`, 15, y);
+      const text = `• ${attr.description}${tierTag}`;
+      if (attr.sacrificed) {
+        // Sacrificed to MOH - disabled. Grey it out and strike it through so
+        // it's clearly no longer conveying any benefit.
+        ctx.fillStyle = '#777777';
+        ctx.fillText(text, 15, y);
+        const w = ctx.measureText(text).width;
+        ctx.strokeStyle = '#777777';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(15, y - 3);
+        ctx.lineTo(15 + w, y - 3);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = attr.tierColor || '#ffff00'; // Color by rarity
+        ctx.fillText(text, 15, y);
+      }
       y += 11;
     });
   }
