@@ -65,14 +65,18 @@ class Enemy extends Unit {
    * Track stun-lock duration. A hit that lands while we're still inside the
    * combo window extends the current stun-lock; a hit after a lull starts a
    * fresh one. updateAI reads stunLockStart to decide when to bail out.
+   *
+   * IMPORTANT: forward ALL args to super - especially ignoreArmor, so the
+   * special attack keeps piercing armor against regular mobs. Dropping it here
+   * silently re-subjected specials to mitigation/amplification.
    */
-  takeDamage(damage) {
+  takeDamage(damage, ignoreArmor = false) {
     const now = Date.now();
     if (!this.stunLockStart || now - this.lastStunHit > STUN_CHAIN_WINDOW_MS) {
       this.stunLockStart = now; // fresh combo
     }
     this.lastStunHit = now;
-    return super.takeDamage(damage);
+    return super.takeDamage(damage, ignoreArmor);
   }
 
   /**
