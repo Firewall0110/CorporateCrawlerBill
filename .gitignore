@@ -23,3 +23,5 @@ data/leaderboard.json.backup
 # (this caused the attribute-picker/sprite regression). src/ + public/ are the
 # single source of truth. To preview a production bundle locally: npm run build.
 build/
+# Added by code-review-graph
+.code-review-graph/
