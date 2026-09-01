@@ -32,6 +32,7 @@ Start with **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
 
 ```
 LESSONS.md                  the codex — read this first
+docs/SETUP.md               first-time Rojo setup — start here if you have not used it
 docs/ARCHITECTURE.md        system design, module map, networking, race lifecycle
 docs/TRACK_FORMAT.md        the track schema and its validation gates
 docs/CHANGELOG.md
@@ -50,6 +51,10 @@ tools/luau_check.py         fast structural check, runs without the Roblox toolc
 ```
 
 ## Getting started
+
+**New to Rojo? Read [`docs/SETUP.md`](docs/SETUP.md).** Short version: Rojo does not push
+code into Studio — Studio *pulls* it from your disk. You run `rojo serve` locally and click
+Connect in a Studio plugin.
 
 ```bash
 # Toolchain (rojo, selene, stylua, lune) — pinned in rokit.toml
