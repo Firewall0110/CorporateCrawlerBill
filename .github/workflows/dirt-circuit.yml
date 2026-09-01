@@ -78,7 +78,7 @@ jobs:
       - name: Verify the toolchain really installed
         run: |
           missing=0
-          for tool in selene stylua rojo; do
+          for tool in selene stylua rojo lune; do
             if ! command -v "$tool" >/dev/null 2>&1; then
               echo "::error::$tool is not on PATH after 'rokit install'"
               missing=1
@@ -108,3 +108,16 @@ jobs:
       # The real proof that the project tree assembles and every $path resolves.
       - name: Rojo build
         run: rojo build --output /tmp/dirt-circuit.rbxl
+
+      # Executes the REAL TrackModel and TrackBuilder over all 30 shipped tracks, forward and
+      # reversed, under Lune. This is the only check in the pipeline that RUNS game code
+      # rather than reading it: it proves the geometry builds without erroring on every track
+      # and that none blows the part budget.
+      #
+      # It has already earned its place. The first run showed all thirty tracks reporting
+      # exactly the decor cap, which turned out to be the crowd ring stopping halfway round
+      # — invisible to every linter, and something you would otherwise find by opening
+      # thirty tracks in Studio one at a time. (LESSONS.md J-04: build the harness, and
+      # commit it.)
+      - name: Track geometry audit
+        run: lune run tools/simharness/audit_tracks.luau

@@ -117,28 +117,44 @@ see the note on the lobby below.
 
 ---
 
-## What you will actually see today
+## Watch a race
 
-Honestly: not a game. Press Play and you get two prints —
+Press **Play Solo**, open the command bar (View → Command Bar) and run:
 
+```lua
+require(game.ServerScriptService.Server.Dev.DevRace).start()
 ```
-[DirtCircuit] server ready — build 0
-[DirtCircuit] client ready
+
+That picks a track from the pool, builds the stadium, fills the grid with eight AI drivers,
+frames the camera and races them over four laps. Standings print to the output window every
+two seconds.
+
+```lua
+-- a specific track, run backwards
+require(game.ServerScriptService.Server.Dev.DevRace).start({ track = "stadium_07", reverse = true })
+
+-- no crowd or floodlights, to see the POTATO-tier part count
+require(game.ServerScriptService.Server.Dev.DevRace).start({ decor = false })
+
+-- build every track and report part counts, without racing
+require(game.ServerScriptService.Server.Dev.DevRace).auditAllTracks()
+
+require(game.ServerScriptService.Server.Dev.DevRace).stop()
 ```
 
-— and a baseplate. The simulation, collision, track model, AI, race lifecycle, persistence,
-remotes and camera all exist and all pass the linters, but nothing calls them yet, because
-the pieces that turn data into a visible world are not written:
+⚠️ `DevRace` is a harness, not the production path. It builds geometry and drives truck
+models **on the server**, so everything replicates; production builds the track client-side,
+because the server never renders and its collision is analytic. It also uses a simplified
+camera fit — `CameraController` owns the real one, with the letterbox mask.
 
-* **`TrackBuilder`** — turns a `track.json` into stadium geometry. Until this exists there
-  is nothing to drive on.
-* **`LobbyService`** and the concourse — no bay doors, so no way to start a race.
-* **`InputController`** — no keyboard/touch input is read.
-* **Race HUD** — no lap counter, position or nitro readout.
+### What is still missing
 
-`TrackBuilder` is the one that changes everything: with it, a track becomes visible, the
-camera can frame it, and a race can be started from a command line in Studio without any
-lobby. That is the shortest path from here to seeing eight trucks race.
+* **`LobbyService`** and the concourse — no bay doors, so no way for a *player* to start a
+  race. `DevRace` is the stand-in.
+* **`InputController`** — no keyboard, touch or gamepad input is read yet, so you can watch
+  the AI race but you cannot drive.
+* **Race HUD** — no lap counter, position tower or nitro readout.
+* **`PickupService`** — cash bags and nitro bottles do not spawn.
 
 ---
 

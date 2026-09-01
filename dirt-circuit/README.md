@@ -39,14 +39,17 @@ docs/CHANGELOG.md
 
 src/shared/Config/          all tuning: vehicle, surfaces, economy, leagues, HUD layout
 src/shared/Sim/             VehicleSim, TrackModel, Collision — runs on BOTH sides
+                            TrackBuilder, TruckBuilder — geometry, built from the same data
 src/shared/Net/Remotes      every remote declared once, with its payload validator
 src/shared/Util/            Schema, Guards, ServiceLoop, Signal, Logger
 src/shared/Tracks/          30 generated tracks (Rojo serves .json as ModuleScripts)
 
-src/server/Services/        DataService, RaceService, AIDriverService, ProfileSchema
+src/server/Services/        DataService, RaceService, AIDriverService, TrackService, ProfileSchema
+src/server/Dev/DevRace      one-liner: build a track, race eight bots, watch it
 src/client/Controllers/     VehicleController (prediction), CameraController (fixed view)
 
 tools/trackgen/             the external track generator + its gate harness
+tools/simharness/           runs the REAL geometry code headlessly under Lune
 tools/luau_check.py         fast structural check, runs without the Roblox toolchain
 ```
 
@@ -84,6 +87,7 @@ rojo build --output build.rbxl      # proves the project tree assembles
 | I want to… | Edit |
 |---|---|
 | Change how a truck handles | `src/shared/Config/VehicleConfig.luau` — data only, never `VehicleSim` |
+| Retheme the game | `src/shared/Config/StyleConfig.luau` — every colour and size, one table |
 | Add a surface type | `src/shared/Config/SurfaceConfig.luau` — one table entry, no code change |
 | Add a persisted player field | `src/server/Services/ProfileSchema.luau` — **one line** |
 | Add a remote | `src/shared/Net/Remotes.luau` — declaration + validator together |
@@ -98,9 +102,12 @@ persistence, remotes, camera, and the track pipeline.
 
 **Verified — the real toolchain has run, in CI and locally:**
 
-- `selene` (roblox std): **0 errors, 0 warnings, 0 parse errors** across all 24 files.
+- `selene` (roblox std): **0 errors, 0 warnings, 0 parse errors**.
 - `stylua --check src`: clean.
 - `rojo build`: the project tree assembles and every `$path` resolves.
+- **The geometry code actually runs.** `tools/simharness` executes the real `TrackModel` and
+  `TrackBuilder` under Lune against all 30 shipped tracks, forward *and* reversed: all build
+  clean, mean 806 parts, worst 1125, inside a 1600-part budget.
 - 24/24 files pass `tools/luau_check.py` (the checker was falsified against deliberately
   broken files, so a pass means something).
 - 30/30 generated tracks pass all 12 gates; the gates were falsified against bad
@@ -123,11 +130,12 @@ precisely so that it can.
 
 ### Not yet written
 
-- `TrackBuilder` — turns `track.json` into stadium geometry.
 - `LobbyService`, bay doors, the Aegis-style concourse.
+- `InputController` — nothing reads keyboard, touch or gamepad yet, so you can watch the
+  AI race but not drive.
 - `PickupService`, `EconomyService`, `LeagueService`, `LeaderboardService`.
 - `LiveConfig`, `Analytics`, `ErrorReporter`, `PolicyService`, `MonetizationService` —
   designed in `docs/ARCHITECTURE.md`, and the lessons that shape them are already written
   down; they are stubs-in-waiting, not open questions.
-- `InputController` (keyboard / touch / gamepad) and the race HUD.
+- The race HUD: lap counter, position tower, nitro readout.
 - `tools/layout_audit.py` — the saved mobile-overlap harness (LESSONS.md J-04).

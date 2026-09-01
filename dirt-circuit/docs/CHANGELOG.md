@@ -23,3 +23,9 @@ step that fell behind (LESSONS.md A-06).
 - Declarative remotes with per-message validators and per-player rate limits.
 - External track generator with a 12-gate validator, SVG previews and a contact sheet.
 - 30 generated stadium tracks.
+- `TrackBuilder`: stadium geometry built from `track.json` — trackbed, barriers, hay bales,
+  ramps, start line, floodlights and crowd stands, in flat-colour voxel parts.
+- `TruckBuilder`: the nine-part voxel truck, and the one function that moves it.
+- `TrackService`: track loading, baking and a no-repeat rotation with random direction.
+- `DevRace`: a one-liner that builds a track and races eight AI drivers on it.
+- `tools/simharness`: runs the real geometry code headlessly under Lune, in CI.

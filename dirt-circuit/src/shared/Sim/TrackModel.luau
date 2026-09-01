@@ -297,10 +297,17 @@ end
 
 function TrackModel:_bakeWalls(data)
 	local segs = {} -- flat: ax, az, bx, bz per 4 entries
+	-- Where each closed polyline starts and ends within `segs`. Collision does not care —
+	-- it only ever asks "what is near me" — but TrackBuilder walks the loops IN ORDER to
+	-- merge consecutive wall segments into single parts, and it cannot do that without
+	-- knowing where one loop stops and the next begins.
+	local loops = {}
+
 	local function addPolyline(poly, closed: boolean)
 		if type(poly) ~= "table" or #poly < 2 then
 			return
 		end
+		local startSeg = #segs // 4
 		local count = closed and #poly or (#poly - 1)
 		for i = 1, count do
 			local a = poly[i]
@@ -310,6 +317,7 @@ function TrackModel:_bakeWalls(data)
 			table.insert(segs, bpt[1])
 			table.insert(segs, bpt[2])
 		end
+		table.insert(loops, { start = startSeg, count = count, closed = closed })
 	end
 
 	local walls = data.walls
@@ -325,6 +333,7 @@ function TrackModel:_bakeWalls(data)
 
 	self.wallSegs = segs
 	self.wallSegCount = #segs // 4
+	self.wallLoops = loops
 
 	-- Bucket each segment into every cell its bounding box touches.
 	local hash = {}

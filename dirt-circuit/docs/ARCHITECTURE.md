@@ -331,6 +331,17 @@ tools/trackgen/generate_track.py     procedural: closed loop, banking, surfaces,
 polylines are all derived from it, so they cannot disagree (H-03). See
 `docs/TRACK_FORMAT.md` for the schema.
 
+**`TrackBuilder` runs on the client, not the server.** The server never renders, and its
+collision is the polyline rather than the parts — so it has no use for geometry at all.
+Building client-side means a few hundred parts per track never touch the network, and a
+POTATO-tier device simply never constructs the crowd and floodlights rather than being sent
+them and then hiding them (E-04).
+
+Part count is the engineering problem, and **run merging** is the answer: adjacent lane
+segments collapse into one part while the surface is unchanged and the track has not turned
+past a threshold. A long straight becomes one part instead of thirty; a hairpin tessellates
+finely because it must. Measured across the 30-track pool: mean 806 parts, worst 1125.
+
 ---
 
 ## 8. What is deliberately not here
