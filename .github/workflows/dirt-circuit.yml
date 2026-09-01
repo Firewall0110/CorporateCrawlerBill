@@ -55,19 +55,56 @@ jobs:
           print(f'{len(files)} committed tracks OK')
           PY
 
-      - uses: CompeyDev/setup-rokit@v0.1.2
-        continue-on-error: true
-        id: rokit
+      # Installs the rokit BINARY. Its own tool-install step is a no-op for us: it discovers
+      # a manifest with `find . -maxdepth 1`, which looks at the repo root, and ours lives in
+      # dirt-circuit/. So the tools are installed explicitly in the next step.
+      - name: Install rokit
+        uses: CompeyDev/setup-rokit@v0.1.2
 
+      - name: Install pinned tools
+        run: rokit install --no-trust-check
+
+      # ⚠️ This step is the fix for the bug that made the first run of this workflow red.
+      #
+      # The tool-install above previously ran at the repo root, found no manifest, installed
+      # NOTHING, and still exited 0 in ten milliseconds. The lint steps were guarded on
+      # `steps.rokit.outcome == 'success'`, which was true — so they ran anyway and died with
+      # `selene: command not found`.
+      #
+      # That is LESSONS.md J-01 exactly: an indirect signal trusted without ever being
+      # falsified. "The action succeeded" was never the same claim as "the tools exist", and
+      # the guard tested the first while meaning the second. So now the check tests the
+      # actual thing, by name.
+      - name: Verify the toolchain really installed
+        run: |
+          missing=0
+          for tool in selene stylua rojo; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "::error::$tool is not on PATH after 'rokit install'"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          selene --version
+          stylua --version
+          rojo --version
+
+      # selene's `std = "roblox"` needs a generated API-dump std file; it is not built in.
+      # Generated in CI rather than committed: it is large, and it tracks whatever the
+      # current Roblox API is, which is what we want a lint run to check against.
+      - name: Generate Roblox std for selene
+        run: selene generate-roblox-std
+
+      # These three are REQUIRED, not best-effort. A toolchain that cannot install must turn
+      # CI red rather than quietly skipping the most valuable checks in the pipeline — an
+      # inert mitigation that looks like it is working is worse than no mitigation, because
+      # it also stops anyone looking. (Same failure shape as LESSONS.md I-02.)
       - name: Lint
-        if: steps.rokit.outcome == 'success'
         run: selene src
 
       - name: Format check
-        if: steps.rokit.outcome == 'success'
         run: stylua --check src
 
       # The real proof that the project tree assembles and every $path resolves.
       - name: Rojo build
-        if: steps.rokit.outcome == 'success'
         run: rojo build --output /tmp/dirt-circuit.rbxl
