@@ -1,0 +1,186 @@
+{
+ "schemaVersion": 1,
+ "masterSeed": 20260901,
+ "tracks": [
+  {
+   "id": "stadium_01",
+   "name": "Gravel Gulch",
+   "lapLength": 1496.0,
+   "seed": 1720264330
+  },
+  {
+   "id": "stadium_02",
+   "name": "Copper Pit",
+   "lapLength": 1296.0,
+   "seed": 1681071963
+  },
+  {
+   "id": "stadium_03",
+   "name": "Ember Stadium",
+   "lapLength": 1496.0,
+   "seed": 1248098403
+  },
+  {
+   "id": "stadium_04",
+   "name": "Mesa Field",
+   "lapLength": 1264.0,
+   "seed": 1519053860
+  },
+  {
+   "id": "stadium_05",
+   "name": "Rust Run",
+   "lapLength": 1744.0,
+   "seed": 162304316
+  },
+  {
+   "id": "stadium_06",
+   "name": "Willow Circuit",
+   "lapLength": 1608.0,
+   "seed": 962124908
+  },
+  {
+   "id": "stadium_07",
+   "name": "Boulder Run",
+   "lapLength": 1088.0,
+   "seed": 2025228660
+  },
+  {
+   "id": "stadium_08",
+   "name": "Willow Gulch",
+   "lapLength": 1720.0,
+   "seed": 570196772
+  },
+  {
+   "id": "stadium_09",
+   "name": "Badger Field",
+   "lapLength": 1616.0,
+   "seed": 295222787
+  },
+  {
+   "id": "stadium_10",
+   "name": "Ember Gulch",
+   "lapLength": 1616.0,
+   "seed": 633106282
+  },
+  {
+   "id": "stadium_11",
+   "name": "Iron Circuit",
+   "lapLength": 1672.0,
+   "seed": 698824778
+  },
+  {
+   "id": "stadium_12",
+   "name": "Clover Gulch",
+   "lapLength": 1784.0,
+   "seed": 822799297
+  },
+  {
+   "id": "stadium_13",
+   "name": "Clover Speedway",
+   "lapLength": 1544.0,
+   "seed": 1626598460
+  },
+  {
+   "id": "stadium_14",
+   "name": "Dust Crossing",
+   "lapLength": 1528.0,
+   "seed": 186148933
+  },
+  {
+   "id": "stadium_15",
+   "name": "Boulder Basin",
+   "lapLength": 1600.0,
+   "seed": 1256661137
+  },
+  {
+   "id": "stadium_16",
+   "name": "Ridge Gulch",
+   "lapLength": 1640.0,
+   "seed": 1041620739
+  },
+  {
+   "id": "stadium_17",
+   "name": "Clover Yard",
+   "lapLength": 1472.0,
+   "seed": 1279259046
+  },
+  {
+   "id": "stadium_18",
+   "name": "Cactus Pit",
+   "lapLength": 1632.0,
+   "seed": 435367410
+  },
+  {
+   "id": "stadium_19",
+   "name": "Ridge Arena",
+   "lapLength": 1296.0,
+   "seed": 483451081
+  },
+  {
+   "id": "stadium_20",
+   "name": "Rust Crossing",
+   "lapLength": 1720.0,
+   "seed": 1346718555
+  },
+  {
+   "id": "stadium_21",
+   "name": "Clover Circuit",
+   "lapLength": 1088.0,
+   "seed": 965451517
+  },
+  {
+   "id": "stadium_22",
+   "name": "Cactus Circuit",
+   "lapLength": 1528.0,
+   "seed": 1776890778
+  },
+  {
+   "id": "stadium_23",
+   "name": "Clover Pit",
+   "lapLength": 1096.0,
+   "seed": 1905153533
+  },
+  {
+   "id": "stadium_24",
+   "name": "Rust Stadium",
+   "lapLength": 1200.0,
+   "seed": 1619037570
+  },
+  {
+   "id": "stadium_25",
+   "name": "Mesa Loop",
+   "lapLength": 1288.0,
+   "seed": 464042743
+  },
+  {
+   "id": "stadium_26",
+   "name": "Ridge Pit",
+   "lapLength": 1504.0,
+   "seed": 1598341720
+  },
+  {
+   "id": "stadium_27",
+   "name": "Boulder Crossing",
+   "lapLength": 1672.0,
+   "seed": 634815626
+  },
+  {
+   "id": "stadium_28",
+   "name": "Badger Crossing",
+   "lapLength": 1688.0,
+   "seed": 2067345030
+  },
+  {
+   "id": "stadium_29",
+   "name": "Boulder Bowl",
+   "lapLength": 1320.0,
+   "seed": 1945625312
+  },
+  {
+   "id": "stadium_30",
+   "name": "Gravel Stadium",
+   "lapLength": 1304.0,
+   "seed": 1086100165
+  }
+ ]
+}

@@ -1,0 +1,8 @@
+# Toolchain pins. Install with `rokit install` (https://github.com/rojo-rbx/rokit).
+# Pinned exactly on purpose: an unpinned toolchain is a build that changes under you.
+
+[tools]
+rojo   = "rojo-rbx/rojo@7.5.1"
+selene = "Kampfkarren/selene@0.28.0"
+stylua = "JohnnyMorganz/StyLua@2.0.2"
+lune   = "lune-org/lune@0.8.9"

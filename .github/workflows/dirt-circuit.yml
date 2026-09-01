@@ -1,0 +1,73 @@
+name: Dirt Circuit
+
+# Scoped by path so it never runs for changes to the beat-em-up server in the repo root.
+on:
+  pull_request:
+    paths: ['dirt-circuit/**', '.github/workflows/dirt-circuit.yml']
+  push:
+    branches: [main]
+    paths: ['dirt-circuit/**']
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: dirt-circuit
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Fast, dependency-free, and catches the gross errors. Runs first so an unbalanced
+      # `end` fails in seconds rather than after a toolchain install.
+      - name: Structural Luau check
+        run: python3 tools/luau_check.py src
+
+      # The track gates. A track that cannot pass them must never reach the game, so the
+      # generator is re-run in dry-run mode against the committed seed and must produce a
+      # full pool with zero unresolvable slots.
+      - name: Track gate harness
+        run: python3 tools/trackgen/generate.py --count 30 --dry-run
+
+      # Committed tracks must still pass today's gates — a gate tightened in a later commit
+      # should fail here rather than in a player's race.
+      - name: Validate committed tracks
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          sys.path.insert(0, 'tools/trackgen')
+          manifest = json.loads(pathlib.Path('src/shared/Tracks/manifest.json').read_text())
+          ids = {t['id'] for t in manifest['tracks']}
+          files = {p.stem for p in pathlib.Path('src/shared/Tracks').glob('stadium_*.json')}
+          assert ids == files, f'manifest/disk mismatch: {ids ^ files}'
+          for p in sorted(pathlib.Path('src/shared/Tracks').glob('stadium_*.json')):
+              d = json.loads(p.read_text())
+              n = len(d['centerline'])
+              assert len(d['halfWidth']) == n and len(d['elevation']) == n, p
+              assert len(d['grid']) == 8, p
+              assert len(d['checkpoints']) >= 8, p
+              assert 1000 <= d['lapLength'] <= 1900, f'{p}: lap {d["lapLength"]}'
+          print(f'{len(files)} committed tracks OK')
+          PY
+
+      - uses: CompeyDev/setup-rokit@v0.1.2
+        continue-on-error: true
+        id: rokit
+
+      - name: Lint
+        if: steps.rokit.outcome == 'success'
+        run: selene src
+
+      - name: Format check
+        if: steps.rokit.outcome == 'success'
+        run: stylua --check src
+
+      # The real proof that the project tree assembles and every $path resolves.
+      - name: Rojo build
+        if: steps.rokit.outcome == 'success'
+        run: rojo build --output /tmp/dirt-circuit.rbxl

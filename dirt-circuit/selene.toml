@@ -1,0 +1,7 @@
+std = "roblox"
+
+[rules]
+# Shadowing is idiomatic in Luau service code and the linter is noisy about it.
+shadowing = "allow"
+# We use `_G` nowhere; keep this loud so it stays that way (Lesson E-04).
+global_usage = "deny"
