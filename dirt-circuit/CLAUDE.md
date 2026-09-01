@@ -52,15 +52,29 @@ no review, no rollback, no CI — followed from it.
 ## Checks
 
 ```bash
-python3 tools/luau_check.py src   # structural; works with no toolchain
-selene src
+python3 tools/luau_check.py src            # structural; works with no toolchain
+selene src                                 # authoritative (needs generate-roblox-std once)
+./tools/selene_local.sh                    # when the API dump is unreachable — see below
 stylua --check src
-rojo build --output /tmp/dc.rbxl  # proves the tree assembles
+rojo build --output /tmp/dc.rbxl           # proves the tree assembles
+lune run tools/simharness/audit_tracks.luau  # RUNS the geometry code over all 30 tracks
 python3 tools/trackgen/generate.py --count 30 --dry-run
 ```
 
 `luau_check.py` is a heuristic, not a parser. It is the gate that runs everywhere; `selene`
 and `luau-analyze` are the gates that are actually right.
+
+⚠️ **Do not "fix" a noisy local check by narrowing what it reports.** In a sandbox where
+`selene generate-roblox-std` cannot reach the network, the `luau` std makes every Roblox
+global look undefined. Filtering the output down to the rule names you care about silences
+`undefined_variable` entirely — and that is precisely how a real `model is not defined`
+reached CI once. Use `tools/selene_local.sh`, which subtracts the known Roblox globals and
+reports everything else. A check narrowed until it cannot fail is not a check.
+
+⚠️ **A loose string replace is a destructive sweep.** The bug above was introduced by a
+scripted edit matching `\tlocal model, stats` — which also matched the three-tab occurrence
+inside a nested block, renaming a variable that was still in use. Same rule as A-04: anchor
+on something unique, and assert the match count before writing.
 
 ## Content
 

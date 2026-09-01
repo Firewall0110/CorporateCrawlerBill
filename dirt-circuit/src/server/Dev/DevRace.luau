@@ -250,7 +250,7 @@ function DevRace.auditAllTracks()
 		local track = TrackService.load(id, false)
 		if track then
 			local t0 = os.clock()
-			local _model, stats = TrackBuilder.build(track, { detailTier = GameConfig.DetailTier.MEDIUM })
+			local model, stats = TrackBuilder.build(track, { detailTier = GameConfig.DetailTier.MEDIUM })
 			local ms = (os.clock() - t0) * 1000
 			totalMs += ms
 			model:Destroy()
