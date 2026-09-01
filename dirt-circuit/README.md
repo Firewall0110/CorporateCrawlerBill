@@ -89,21 +89,32 @@ rojo build --output build.rbxl      # proves the project tree assembles
 ## Status
 
 Scaffold plus a complete core: simulation, collision, track model, AI, race lifecycle,
-persistence, remotes, camera, and the track pipeline. Verified here:
+persistence, remotes, camera, and the track pipeline.
 
-- 24/24 Luau files pass the structural check (the checker itself was falsified against
-  deliberately broken files).
+**Verified — the real toolchain has run, in CI and locally:**
+
+- `selene` (roblox std): **0 errors, 0 warnings, 0 parse errors** across all 24 files.
+- `stylua --check src`: clean.
+- `rojo build`: the project tree assembles and every `$path` resolves.
+- 24/24 files pass `tools/luau_check.py` (the checker was falsified against deliberately
+  broken files, so a pass means something).
 - 30/30 generated tracks pass all 12 gates; the gates were falsified against bad
   parameters to confirm they fire, and one candidate is rejected in a normal run.
 - Race pacing checked numerically: 4-lap races land at 65–107 s on a stock truck and
   41–67 s maxed. The lap-length gate was tightened from the first pass because the
   original band produced two-minute races for new players.
 
-**Not verified here, and honestly so:** no Luau has been executed. The Roblox toolchain
-could not be installed in this environment, so `selene`, `stylua`, `luau-analyze` and
-`rojo build` have never run against this code, and neither has the game. The structural
-checker is a heuristic, not a parser. Expect to fix real syntax and type errors on the
-first `rojo serve`.
+The first green CI run also earned its keep: selene's "unused variable" warning on
+`groundY` turned out to be the visible symptom of a real bug, where a truck jumping toward
+rising ground flew through the hill and landed late by the elevation change. Fixed by
+making `v.y` absolute and resolving height after the horizontal move.
+
+**Still not verified:** the game has never been *run*. Nothing here has been played, no
+Studio session has opened it, and no frame has been rendered. Static analysis says the code
+is well-formed and the tree assembles; it says nothing about whether the trucks feel good,
+whether the AI is beatable, or whether the camera frames a stadium sensibly. Expect the
+first playtest to move a lot of numbers in `Config/` — which is where they all live,
+precisely so that it can.
 
 ### Not yet written
 
