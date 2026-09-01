@@ -124,7 +124,11 @@ function Validate.feedback(raw)
 		return nil
 	end
 	return {
-		category = Guards.enum(raw.category, { bug = true, idea = true, praise = true, other = true }, "other"),
+		category = Guards.enum(
+			raw.category,
+			{ bug = true, idea = true, praise = true, other = true },
+			"other"
+		),
 		text = text,
 	}
 end

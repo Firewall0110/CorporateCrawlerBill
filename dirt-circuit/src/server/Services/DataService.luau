@@ -21,7 +21,6 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Schema = require(ReplicatedStorage.Shared.Util.Schema)
 local ServiceLoop = require(ReplicatedStorage.Shared.Util.ServiceLoop)
 local Signal = require(ReplicatedStorage.Shared.Util.Signal)
 local ProfileSchema = require(script.Parent.ProfileSchema)

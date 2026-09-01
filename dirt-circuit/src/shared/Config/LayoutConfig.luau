@@ -129,11 +129,8 @@ function LayoutConfig.effectiveUserScale(requested: number, viewport: Vector2): 
 	if r <= 1 then
 		return 1
 	end
-	local t = math.clamp(
-		(viewport.Y - s.rampMinHeight) / math.max(s.rampMaxHeight - s.rampMinHeight, 1),
-		0,
-		1
-	)
+	local t =
+		math.clamp((viewport.Y - s.rampMinHeight) / math.max(s.rampMaxHeight - s.rampMinHeight, 1), 0, 1)
 	return 1 + (r - 1) * t
 end
 

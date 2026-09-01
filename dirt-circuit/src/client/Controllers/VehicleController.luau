@@ -14,7 +14,6 @@
 -- Other trucks are INTERPOLATED, never predicted. A mispredicted opponent that snaps into
 -- place is much worse to race against than one rendered a tenth of a second late.
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
@@ -24,8 +23,6 @@ local Remotes = require(ReplicatedStorage.Shared.Net.Remotes)
 local ClientState = require(script.Parent.Parent.ClientState)
 
 local VehicleController = {}
-
-local player = Players.LocalPlayer
 
 local accumulator = 0
 local sendAccumulator = 0

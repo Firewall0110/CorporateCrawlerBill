@@ -75,7 +75,8 @@ function VehicleSim.create(id: string, stats, spawn)
 		heading = spawn.heading,
 		vx = 0,
 		vz = 0,
-		height = 0, -- studs above the track surface directly below
+		y = 0, -- ABSOLUTE world height; the authoritative vertical state
+		height = 0, -- derived: studs above the track surface directly below
 		vy = 0,
 		airborne = false,
 
@@ -112,6 +113,7 @@ function VehicleSim.reset(v, spawn)
 	v.safePx, v.safePz = spawn.x, spawn.z
 	v.heading = spawn.heading
 	v.vx, v.vz, v.vy = 0, 0, 0
+	v.y = 0 -- snapped onto the surface by the first step's grounded branch
 	v.height = 0
 	v.airborne = false
 	v.susp = 0
@@ -182,47 +184,22 @@ function VehicleSim.step(v, input: Input, track, dt: number)
 	-- 2. Airborne vs grounded
 	----------------------------------------------------------------------------
 
-	local groundY = track:groundHeightAt(v.px, v.pz)
-
 	if v.airborne then
 		-- Steering input is ignored in the air, per spec. The truck keeps whatever heading
 		-- and momentum it left the ramp with, which is what makes lining up a jump a skill.
+		--
+		-- Only vertical VELOCITY is advanced here. The vertical POSITION and the landing
+		-- test happen in section 5, after the truck has moved horizontally, so they are
+		-- resolved against the ground the truck is actually over rather than the ground it
+		-- has just left.
 		v.vy -= GRAVITY * dt
-		v.height += v.vy * dt
 
 		vF -= vF * AIR_DRAG * dt
 		vL -= vL * AIR_DRAG * dt
-
-		if v.height <= 0 then
-			----------------------------------------------------------------------
-			-- Landing. This is the entire payoff of the Shocks upgrade ladder.
-			----------------------------------------------------------------------
-			local impact = -v.vy
-			v.height = 0
-			v.susp = 1
-
-			local severity = math.clamp(impact / stats.landingReferenceSpeed, 0, 1)
-			v.lastLandingSeverity = severity
-
-			-- Speed you keep depends on how well the truck absorbs the hit.
-			vF *= (1 - stats.landingSpeedLoss * severity)
-
-			-- Bounce is what the suspension fails to absorb.
-			local bounce = impact * (1 - stats.landingDamp)
-			if bounce > MIN_BOUNCE then
-				v.vy = bounce
-				v.height = 0.01 -- stay airborne for the rebound
-			else
-				v.vy = 0
-				v.airborne = false
-			end
-		end
 	else
 		----------------------------------------------------------------------------
 		-- 3. Grounded: steer, then drive, then scrub
 		----------------------------------------------------------------------------
-
-		v.height = 0
 
 		local speed = math.abs(vF)
 		local speedFrac = math.clamp(speed / math.max(stats.topSpeed, 1), 0, 1)
@@ -290,7 +267,6 @@ function VehicleSim.step(v, input: Input, track, dt: number)
 			if jolt > 0 then
 				v.vy = jolt
 				v.airborne = true
-				v.height = 0.01
 			end
 			vF -= vF * 0.35 * resist * dt
 		end
@@ -302,7 +278,6 @@ function VehicleSim.step(v, input: Input, track, dt: number)
 			-- you across the stadium.
 			v.vy = launch * math.clamp(speed / math.max(stats.topSpeed, 1), 0.35, 1.15)
 			v.airborne = true
-			v.height = 0.01
 		end
 	end
 
@@ -322,7 +297,63 @@ function VehicleSim.step(v, input: Input, track, dt: number)
 	v.wheelSpin += math.abs(vF) * dt * 0.35
 
 	----------------------------------------------------------------------------
-	-- 5. Collision (walls only here; truck-vs-truck is resolved for the whole field
+	-- 5. Vertical resolution — AFTER the horizontal move, on purpose.
+	--
+	-- `v.y` is the authoritative vertical state and is ABSOLUTE; `v.height` is derived from
+	-- it for the view layer and the wire format. Doing it this way round is what makes a
+	-- jump land correctly on sloped ground.
+	--
+	-- The first cut of this function integrated `height` (a value relative to the surface)
+	-- while the truck was in the air, and never re-read the ground underneath it. A truck
+	-- launched toward rising ground would therefore fly straight through the hill and land
+	-- late, by exactly the elevation change — up to ~11 studs on these tracks, which is
+	-- more than a truck is tall. selene flagged the leftover `groundY` as an unused local
+	-- and that is how the bug surfaced: a dead variable was the visible symptom of a
+	-- calculation that had been written and then not used.
+	----------------------------------------------------------------------------
+
+	local groundY = track:groundHeightAt(v.px, v.pz)
+
+	if v.airborne then
+		v.y += v.vy * dt
+
+		if v.y <= groundY then
+			------------------------------------------------------------------
+			-- Landing. This is the entire payoff of the Shocks upgrade ladder.
+			------------------------------------------------------------------
+			local impact = math.max(0, -v.vy)
+			v.y = groundY
+			v.susp = 1
+
+			local severity = math.clamp(impact / stats.landingReferenceSpeed, 0, 1)
+			v.lastLandingSeverity = severity
+
+			-- Speed you keep depends on how well the truck absorbs the hit. Applied to the
+			-- planar velocity directly, since it has already been recomposed above — and a
+			-- heavy landing scrubs momentum in every direction, not only forward.
+			local keep = 1 - stats.landingSpeedLoss * severity
+			v.vx *= keep
+			v.vz *= keep
+
+			-- Bounce is what the suspension fails to absorb.
+			local bounce = impact * (1 - stats.landingDamp)
+			if bounce > MIN_BOUNCE then
+				v.vy = bounce
+			else
+				v.vy = 0
+				v.airborne = false
+			end
+		end
+	else
+		-- Glued to the surface: follow the terrain rather than integrating through it.
+		v.y = groundY
+		v.vy = 0
+	end
+
+	v.height = math.max(0, v.y - groundY)
+
+	----------------------------------------------------------------------------
+	-- 6. Collision (walls only here; truck-vs-truck is resolved for the whole field
 	--    at once by the caller, after every vehicle has been stepped)
 	----------------------------------------------------------------------------
 
@@ -334,13 +365,13 @@ function VehicleSim.step(v, input: Input, track, dt: number)
 	end
 
 	----------------------------------------------------------------------------
-	-- 6. Track progress
+	-- 7. Track progress
 	----------------------------------------------------------------------------
 
 	VehicleSim._advanceProgress(v, track)
 
 	----------------------------------------------------------------------------
-	-- 7. Non-finite guard (Lesson B-03)
+	-- 8. Non-finite guard (Lesson B-03)
 	--
 	-- NaN satisfies `type(x) == "number"`, survives `math.clamp`, and makes every
 	-- comparison false, so it would sail through any range check written above. One NaN
@@ -356,12 +387,14 @@ function VehicleSim.step(v, input: Input, track, dt: number)
 			and Guards.finite(v.vz)
 			and Guards.finite(v.heading)
 			and Guards.finite(v.height)
+			and Guards.finite(v.y)
 			and Guards.finite(v.vy)
 		)
 	then
 		warn(string.format("[VehicleSim] non-finite state for %s; restoring last good position", v.id))
 		v.px, v.pz = v.safePx, v.safePz
 		v.vx, v.vz, v.vy = 0, 0, 0
+		v.y = track:groundHeightAt(v.safePx, v.safePz)
 		v.height = 0
 		v.airborne = false
 		if not Guards.finite(v.heading) then
@@ -429,6 +462,7 @@ function VehicleSim.unpackInto(v, data: { number }, offset: number)
 	v.pz = data[offset + 2]
 	v.heading = data[offset + 3]
 	v.height = data[offset + 4]
+	v.y = v.height -- callers with a track rebase this; views only need the relative value
 	v.vx = data[offset + 5]
 	v.vz = data[offset + 6]
 	v.vy = data[offset + 7]

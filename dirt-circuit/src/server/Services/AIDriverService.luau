@@ -83,8 +83,22 @@ local TUNING = {
 AIDriverService.TUNING = TUNING
 
 local BOT_NAMES = {
-	"Ironman", "Ratchet", "Bandit", "Muddy", "Sprocket", "Dizzy", "Boomer", "Tumble",
-	"Gravel", "Wrench", "Skid", "Nitro", "Hazard", "Clutch", "Dozer", "Piston",
+	"Ironman",
+	"Ratchet",
+	"Bandit",
+	"Muddy",
+	"Sprocket",
+	"Dizzy",
+	"Boomer",
+	"Tumble",
+	"Gravel",
+	"Wrench",
+	"Skid",
+	"Nitro",
+	"Hazard",
+	"Clutch",
+	"Dozer",
+	"Piston",
 }
 
 --------------------------------------------------------------------------------
@@ -243,11 +257,7 @@ function AIDriverService.think(bot, track, field, fieldCount: number, ctx, dt: n
 
 	local myProgress = VehicleSim.progress(v, track)
 	local gapLaps = (ctx.leaderProgress - myProgress) / math.max(track.checkpointCount, 1)
-	local band = math.clamp(
-		1 + gapLaps * TUNING.bandPerLapGap,
-		TUNING.bandMin,
-		TUNING.bandMax
-	)
+	local band = math.clamp(1 + gapLaps * TUNING.bandPerLapGap, TUNING.bandMin, TUNING.bandMax)
 	bot.bandMult = band
 	v.stats.accel = bot.baseAccel * band
 	v.stats.topSpeed = bot.baseTopSpeed * band

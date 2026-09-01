@@ -353,10 +353,14 @@ function Session:payout(league: string)
 				-- Force the write and CHECK it. A payout that cannot persist must be
 				-- visible, not silently lost. (LESSONS.md B-04)
 				if not DataService.save(player) then
-					warn(string.format(
-						"[RaceService] payout for %s did not persist (cash=%d trophies=%d)",
-						player.Name, cash, trophies
-					))
+					warn(
+						string.format(
+							"[RaceService] payout for %s did not persist (cash=%d trophies=%d)",
+							player.Name,
+							cash,
+							trophies
+						)
+					)
 				end
 			end)
 			if not ok then
@@ -383,7 +387,12 @@ function Session:tick(frameDt: number)
 		self.accumulator = leftover
 		for _ = 1, steps do
 			for i = 1, self.vehicleCount do
-				VehicleSim.step(self.vehicles[i], VehicleSim.NEUTRAL_INPUT, self.track, GameConfig.PhysicsStep)
+				VehicleSim.step(
+					self.vehicles[i],
+					VehicleSim.NEUTRAL_INPUT,
+					self.track,
+					GameConfig.PhysicsStep
+				)
 			end
 			Collision.resolveTrucks(self.vehicles, self.vehicleCount)
 		end

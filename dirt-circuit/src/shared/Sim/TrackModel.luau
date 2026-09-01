@@ -148,12 +148,12 @@ function TrackModel:_bakeBounds(data)
 	local minY, maxY = math.huge, -math.huge
 
 	local function eat(x, z, y)
-		if x < minX then minX = x end
-		if x > maxX then maxX = x end
-		if z < minZ then minZ = z end
-		if z > maxZ then maxZ = z end
-		if y < minY then minY = y end
-		if y > maxY then maxY = y end
+		minX = math.min(minX, x)
+		maxX = math.max(maxX, x)
+		minZ = math.min(minZ, z)
+		maxZ = math.max(maxZ, z)
+		minY = math.min(minY, y)
+		maxY = math.max(maxY, y)
 	end
 
 	for i = 1, self.nodeCount do
@@ -213,8 +213,10 @@ function TrackModel:_bakeGrid(data)
 				local pminX, pmaxX = math.huge, -math.huge
 				local pminZ, pmaxZ = math.huge, -math.huge
 				for _, p in poly do
-					pminX = math.min(pminX, p[1]); pmaxX = math.max(pmaxX, p[1])
-					pminZ = math.min(pminZ, p[2]); pmaxZ = math.max(pmaxZ, p[2])
+					pminX = math.min(pminX, p[1])
+					pmaxX = math.max(pmaxX, p[1])
+					pminZ = math.min(pminZ, p[2])
+					pmaxZ = math.max(pmaxZ, p[2])
 				end
 				-- Only rasterise the polygon's own bounding box, not the whole track.
 				local gx0 = math.max(0, math.floor((pminX - b.minX) / GRID_CELL))
@@ -303,8 +305,10 @@ function TrackModel:_bakeWalls(data)
 		for i = 1, count do
 			local a = poly[i]
 			local bpt = poly[(i % #poly) + 1]
-			table.insert(segs, a[1]); table.insert(segs, a[2])
-			table.insert(segs, bpt[1]); table.insert(segs, bpt[2])
+			table.insert(segs, a[1])
+			table.insert(segs, a[2])
+			table.insert(segs, bpt[1])
+			table.insert(segs, bpt[2])
 		end
 	end
 
@@ -457,8 +461,10 @@ function TrackModel:_bakeCheckpoints(data)
 			local g = raw[j]
 			if type(g) == "table" and type(g.a) == "table" and type(g.b) == "table" then
 				table.insert(gates, {
-					ax = g.a[1], az = g.a[2],
-					bx = g.b[1], bz = g.b[2],
+					ax = g.a[1],
+					az = g.a[2],
+					bx = g.b[1],
+					bz = g.b[2],
 					node = g.node,
 				})
 			end
