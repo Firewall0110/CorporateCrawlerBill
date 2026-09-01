@@ -32,6 +32,7 @@ Start with **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**.
 
 ```
 LESSONS.md                  the codex — read this first
+docs/HANDOFF.md             current state, what is untested, and what to do first
 docs/SETUP.md               first-time Rojo setup — start here if you have not used it
 docs/ARCHITECTURE.md        system design, module map, networking, race lifecycle
 docs/TRACK_FORMAT.md        the track schema and its validation gates
