@@ -230,3 +230,90 @@ for acc = 0, VehicleConfig.Tiers do
 	end
 	print(row)
 end
+
+--------------------------------------------------------------------------------
+-- STEERING ENVELOPE vs TRACK GEOMETRY
+--
+-- VehicleSim multiplies THREE speed-dependent terms into one steering input:
+--   1. speed falloff   turnRate * (1 - (1 - turnRateAtTopSpeed) * speedFrac)
+--   2. authority       clamp(speed / STEER_AUTHORITY_SPEED, 0, 1)
+--   3. drift bonus     * (1 + driftTurnBonus * slipFrac)
+--
+-- Tuning any one of them in isolation cannot fix a problem caused by the stack, so the
+-- useful question is not "what is the yaw rate" but "what is the tightest circle the truck
+-- can describe at speed v" — R = v / omega — and does that fit the corners we generate?
+--
+-- That converts a feel argument into a geometry check.
+print("\n=== steering envelope: minimum turn radius by speed ===")
+print(string.format("%8s %12s %12s %12s %12s", "speed", "yaw deg/s", "R stock", "R maxed", "R drifting"))
+
+local BASE = VehicleConfig.Base
+local STEER_AUTHORITY_SPEED = 8
+local FULL_SLIP_SPEED = 40
+
+local function yawRate(speed, turnMult, slipFrac, topSpeed)
+	local speedFrac = math.clamp(speed / topSpeed, 0, 1)
+	local turn = BASE.turnRate * turnMult * (1 - (1 - BASE.turnRateAtTopSpeed) * speedFrac)
+	turn *= (1 + BASE.driftTurnBonus * math.clamp(slipFrac, 0, 1))
+	return turn * math.clamp(speed / STEER_AUTHORITY_SPEED, 0, 1)
+end
+
+local stockTurn = VehicleConfig.Upgrades.tires.turnMult[1]
+local maxedTurn = VehicleConfig.Upgrades.tires.turnMult[VehicleConfig.Tiers + 1]
+
+for _, speed in { 20, 40, 60, 80, 92.6, 110, 130 } do
+	local w = yawRate(speed, stockTurn, 0, 108)
+	local wMax = yawRate(speed, maxedTurn, 0, 172)
+	local wDrift = yawRate(speed, maxedTurn, 1, 172)
+	print(string.format("%8.1f %12.1f %12.1f %12.1f %12.1f",
+		speed, math.deg(w), speed / w, speed / wMax, speed / wDrift))
+end
+
+--------------------------------------------------------------------------------
+print("\n=== do those radii fit the corners we generate? ===")
+local minRadius, minRadiusTrack = math.huge, ""
+local p10 = {}
+
+for _, file in fs.readDir("src/shared/Tracks") do
+	local id = file:match("^(stadium_%d+)%.json$")
+	if id then
+		local track = TrackModel.fromData(net.jsonDecode(fs.readFile("src/shared/Tracks/" .. file)), false)
+		local worst = 0
+		for i = 1, track.nodeCount do
+			local k = math.abs(track:curvatureAt(i))
+			if k > worst then
+				worst = k
+			end
+		end
+		local r = (worst > 1e-9) and (1 / worst) or math.huge
+		table.insert(p10, r)
+		if r < minRadius then
+			minRadius, minRadiusTrack = r, id
+		end
+	end
+end
+table.sort(p10)
+
+print(string.format("tightest corner in the pool: %.1f studs (%s)", minRadius, minRadiusTrack))
+print(string.format("median track's tightest corner: %.1f studs", p10[math.ceil(#p10 / 2)]))
+
+-- Solve  R(v) = target  for v, i.e. the fastest you can take that corner.
+local function maxSpeedForRadius(target, turnMult, slipFrac, topSpeed)
+	local best = 0
+	for v = 1, 200, 0.5 do
+		local w = yawRate(v, turnMult, slipFrac, topSpeed)
+		if w > 1e-6 and (v / w) <= target then
+			best = v
+		end
+	end
+	return best
+end
+
+print("")
+print(string.format("%-34s %10s %10s", "corner", "stock", "maxed+drift"))
+for _, case in { { "tightest in pool", minRadius }, { "median track's tightest", p10[math.ceil(#p10 / 2)] } } do
+	print(string.format("%-34s %10.1f %10.1f", case[1],
+		maxSpeedForRadius(case[2], stockTurn, 0, 108),
+		maxSpeedForRadius(case[2], maxedTurn, 1, 172)))
+end
+print("(studs/s the truck can carry through that corner. Stock reaches 92.6 flat out.)")
